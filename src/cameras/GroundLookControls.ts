@@ -51,8 +51,11 @@ export class GroundLookControls {
     this.lastX = event.clientX;
     this.lastY = event.clientY;
 
-    this.yaw -= dx * this.rotateSpeed;
-    this.pitch = THREE.MathUtils.clamp(this.pitch - dy * this.rotateSpeed, -MAX_PITCH, MAX_PITCH);
+    // "Grab the world and drag it" feel, not FPS mouselook: the point
+    // under the cursor should track the cursor, so the view moves WITH
+    // the drag direction rather than opposite it (drag down -> tilt up).
+    this.yaw += dx * this.rotateSpeed;
+    this.pitch = THREE.MathUtils.clamp(this.pitch + dy * this.rotateSpeed, -MAX_PITCH, MAX_PITCH);
     this.applyRotation();
   };
 
