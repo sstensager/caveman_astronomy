@@ -1,7 +1,7 @@
 import * as THREE from "three";
-import type { Entity } from "./Entity";
-import { CELESTIAL_SPHERE_RADIUS, COLORS, STAR_COUNT } from "../config/constants";
-import { randomPointOnSphere } from "../utils/random";
+import type { Layer } from "../Layer";
+import { CELESTIAL_SPHERE_RADIUS, COLORS, STAR_COUNT } from "../../config/constants";
+import { randomPointOnSphere } from "../../utils/random";
 
 /**
  * A large sphere of points representing "effectively infinitely far away"
@@ -10,7 +10,10 @@ import { randomPointOnSphere } from "../utils/random";
  * beneath it in Space View, and as moving overhead in Ground View once
  * the observer's horizon rotates instead.
  */
-export class StarSphere implements Entity {
+export class StarsLayer implements Layer {
+  readonly id = "stars";
+  readonly label = "Show Stars";
+  readonly group = "Sky.Observation" as const;
   readonly object3D: THREE.Points;
 
   constructor() {
@@ -32,11 +35,8 @@ export class StarSphere implements Entity {
     });
 
     this.object3D = new THREE.Points(geometry, material);
-    this.object3D.name = "StarSphere";
+    this.object3D.name = "StarsLayer";
   }
-
-  // Stars are static; nothing to advance per frame in v0.1.
-  update(): void {}
 
   setVisible(visible: boolean): void {
     this.object3D.visible = visible;

@@ -29,3 +29,7 @@ export const COLORS = {
   axis: 0xe0e0e0,
   star: 0xffffff,
 } as const;
+
+export const TEXTURES = {
+  continents: "/textures/earth1.png",
+} as const;

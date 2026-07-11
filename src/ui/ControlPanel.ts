@@ -1,19 +1,26 @@
 import { CameraMode } from "../cameras/CameraMode";
 import { TIME_SPEED_DEFAULT, TIME_SPEED_MAX, TIME_SPEED_MIN } from "../config/constants";
 
+/** One checkbox, driven from a registered layer rather than hardcoded here. */
+export interface LayerToggleDef {
+  id: string;
+  label: string;
+  defaultVisible: boolean;
+}
+
 export interface ControlPanelCallbacks {
+  layerToggles: LayerToggleDef[];
+  onLayerToggle: (id: string, visible: boolean) => void;
   onRotateEarthChange: (enabled: boolean) => void;
-  onShowEarthChange: (visible: boolean) => void;
-  onShowStarsChange: (visible: boolean) => void;
-  onShowAxisChange: (visible: boolean) => void;
   onTimeSpeedChange: (speed: number) => void;
   onCameraModeChange: (mode: CameraMode) => void;
 }
 
 /**
  * Plain-DOM control panel overlay. Deliberately dumb: it only renders
- * inputs and reports changes via callbacks, so new toggles (Sun, Moon,
- * latitude, etc.) can be added later without touching scene code.
+ * inputs and reports changes via callbacks. New layers appear here
+ * automatically via `layerToggles` - adding a layer never requires
+ * editing this file.
  */
 export class ControlPanel {
   readonly element: HTMLElement;
@@ -40,12 +47,15 @@ export class ControlPanel {
     const section = document.createElement("div");
     section.className = "control-section";
 
-    section.appendChild(
-      this.createCheckbox("Rotate Earth", true, callbacks.onRotateEarthChange),
-    );
-    section.appendChild(this.createCheckbox("Show Earth", true, callbacks.onShowEarthChange));
-    section.appendChild(this.createCheckbox("Show Stars", true, callbacks.onShowStarsChange));
-    section.appendChild(this.createCheckbox("Show Axis", true, callbacks.onShowAxisChange));
+    section.appendChild(this.createCheckbox("Rotate Earth", true, callbacks.onRotateEarthChange));
+
+    for (const layerToggle of callbacks.layerToggles) {
+      section.appendChild(
+        this.createCheckbox(layerToggle.label, layerToggle.defaultVisible, (checked) =>
+          callbacks.onLayerToggle(layerToggle.id, checked),
+        ),
+      );
+    }
 
     return section;
   }
