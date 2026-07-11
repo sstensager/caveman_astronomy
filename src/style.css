@@ -1,0 +1,17 @@
+html,
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  background: #02030a;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+}
+
+#app canvas {
+  display: block;
+}
