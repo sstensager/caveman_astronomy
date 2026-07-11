@@ -1,11 +1,10 @@
 import type * as THREE from "three";
-import type { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 
-// A camera paired with the controls that drive it. Space and Ground views
-// both implement this so CameraManager can treat them identically.
+// A camera paired with whatever controls drive it. Space and Ground views
+// each own a different control scheme internally (free orbit vs. local
+// look), so this interface only exposes what CameraManager needs.
 export interface CameraRig {
   readonly camera: THREE.PerspectiveCamera;
-  readonly controls: OrbitControls;
   setActive(active: boolean): void;
   update(): void;
   setAspect(aspect: number): void;
