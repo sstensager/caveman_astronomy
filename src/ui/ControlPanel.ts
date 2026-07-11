@@ -8,11 +8,18 @@ export interface LayerToggleDef {
   defaultVisible: boolean;
 }
 
+/** One view button, driven from a list rather than hardcoded here. */
+export interface ViewModeDef {
+  mode: CameraMode;
+  label: string;
+}
+
 export interface ControlPanelCallbacks {
   layerToggles: LayerToggleDef[];
   onLayerToggle: (id: string, visible: boolean) => void;
   onRotateEarthChange: (enabled: boolean) => void;
   onTimeSpeedChange: (speed: number) => void;
+  viewModes: ViewModeDef[];
   onCameraModeChange: (mode: CameraMode) => void;
 }
 
@@ -64,18 +71,12 @@ export class ControlPanel {
     const section = document.createElement("div");
     section.className = "control-section control-section--row";
 
-    const spaceButton = this.createButton("Space View", () =>
-      callbacks.onCameraModeChange(CameraMode.Space),
-    );
-    const groundButton = this.createButton("Ground View", () =>
-      callbacks.onCameraModeChange(CameraMode.Ground),
-    );
+    for (const viewMode of callbacks.viewModes) {
+      const button = this.createButton(viewMode.label, () => callbacks.onCameraModeChange(viewMode.mode));
+      this.viewButtons[viewMode.mode] = button;
+      section.appendChild(button);
+    }
 
-    this.viewButtons[CameraMode.Space] = spaceButton;
-    this.viewButtons[CameraMode.Ground] = groundButton;
-
-    section.appendChild(spaceButton);
-    section.appendChild(groundButton);
     return section;
   }
 

@@ -1,18 +1,30 @@
 import * as THREE from "three";
 import { CameraMode } from "./CameraMode";
 import type { CameraRig } from "./CameraRig";
-import { SpaceCameraRig } from "./SpaceCameraRig";
+import { OrbitCameraRig } from "./OrbitCameraRig";
 import { GroundCameraRig } from "./GroundCameraRig";
+import { CELESTIAL_GLOBE_RADIUS, EARTH_RADIUS } from "../config/constants";
 
-/** Owns both camera rigs and switches which one is active/rendered. */
+/** Owns all camera rigs and switches which one is active/rendered. */
 export class CameraManager {
   private readonly rigs: Record<CameraMode, CameraRig>;
   private mode: CameraMode;
 
   constructor(groundStation: THREE.Object3D, domElement: HTMLElement, initialMode = CameraMode.Space) {
     this.rigs = {
-      [CameraMode.Space]: new SpaceCameraRig(domElement),
+      [CameraMode.Space]: new OrbitCameraRig({
+        domElement,
+        initialPosition: [EARTH_RADIUS * 3, EARTH_RADIUS * 2, EARTH_RADIUS * 3],
+        minDistance: EARTH_RADIUS * 1.5,
+        maxDistance: EARTH_RADIUS * 40,
+      }),
       [CameraMode.Ground]: new GroundCameraRig(groundStation, domElement),
+      [CameraMode.CelestialSphere]: new OrbitCameraRig({
+        domElement,
+        initialPosition: [CELESTIAL_GLOBE_RADIUS * 1.8, CELESTIAL_GLOBE_RADIUS * 1.2, CELESTIAL_GLOBE_RADIUS * 1.8],
+        minDistance: CELESTIAL_GLOBE_RADIUS * 1.1,
+        maxDistance: CELESTIAL_GLOBE_RADIUS * 5,
+      }),
     };
     this.mode = initialMode;
     this.rigs[this.mode].setActive(true);
