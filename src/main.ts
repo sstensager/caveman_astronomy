@@ -196,6 +196,8 @@ const moonMarkerSky = new CelestialMarkerLayer(BodyIds.Moon, getActiveModel, get
   color: COLORS.moon,
   radius: CELESTIAL_SPHERE_RADIUS,
   observerCentered: true,
+  textureUrl: "/textures/moon1.png",
+  spinMode: "tidalLocked",
 });
 const moonMarkerGlobe = new CelestialMarkerLayer(BodyIds.Moon, getActiveModel, getActiveObserver, getSimulationTime, {
   id: "moonMarkerGlobe",
@@ -203,6 +205,8 @@ const moonMarkerGlobe = new CelestialMarkerLayer(BodyIds.Moon, getActiveModel, g
   color: COLORS.moon,
   radius: CELESTIAL_GLOBE_RADIUS,
   orbitRadiusFraction: MOON_GLOBE_ORBIT_FRACTION,
+  textureUrl: "/textures/moon1.png",
+  spinMode: "tidalLocked",
 });
 const moonMarker = new CompositeLayer("moonMarker", "Show Moon", "Sky.Observation", [moonMarkerSky, moonMarkerGlobe]);
 
@@ -426,6 +430,22 @@ function addObserver(): void {
   controlPanel.addObserverButton({ id, label });
 }
 
+// Shared by the Camera section's own buttons AND by anything that needs to
+// switch mode as a side effect (see celestialSphere/stars.celestialSphere
+// onChange below) - the globe tier is only ever visible from the Celestial
+// Sphere camera (see globeTierAllowed), so checking "Celestial Sphere
+// visible" or "Celestial Sphere Stars visible" from Ground/Space View would
+// otherwise leave the checkbox checked with nothing on screen to show for
+// it - reported as "clicking celestial sphere brings up nothing."
+function switchCameraMode(mode: CameraMode): void {
+  cameraManager.setMode(mode);
+  controlPanel.setActiveCameraMode(mode);
+  groundMoveControls.setActive(mode === CameraMode.Ground);
+  applyPlacementArming();
+  applyGlobeTierVisibility();
+  syncGlobeTierCheckboxes();
+}
+
 const panelConfig: ControlPanelConfig = {
   scene: {
     presets: SCENE_PRESETS.map((preset) => ({
@@ -523,7 +543,11 @@ const panelConfig: ControlPanelConfig = {
       checked: false,
       onChange: (v) => {
         celestialSphereShellWanted = v;
-        applyGlobeTierVisibility();
+        if (v && cameraManager.getMode() !== CameraMode.CelestialSphere) {
+          switchCameraMode(CameraMode.CelestialSphere);
+        } else {
+          applyGlobeTierVisibility();
+        }
       },
     },
     wireframeOpacity: {
@@ -573,7 +597,11 @@ const panelConfig: ControlPanelConfig = {
         checked: false,
         onChange: (v) => {
           celestialSphereStarsWanted = v;
-          applyGlobeTierVisibility();
+          if (v && cameraManager.getMode() !== CameraMode.CelestialSphere) {
+            switchCameraMode(CameraMode.CelestialSphere);
+          } else {
+            applyGlobeTierVisibility();
+          }
         },
       },
       limitingMagnitude: {
@@ -608,14 +636,7 @@ const panelConfig: ControlPanelConfig = {
   },
   camera: {
     viewModes,
-    onCameraModeChange: (mode) => {
-      cameraManager.setMode(mode);
-      controlPanel.setActiveCameraMode(mode);
-      groundMoveControls.setActive(mode === CameraMode.Ground);
-      applyPlacementArming();
-      applyGlobeTierVisibility();
-      syncGlobeTierCheckboxes();
-    },
+    onCameraModeChange: switchCameraMode,
   },
   time: {
     onPlayPauseChange: (paused) => (simClock.paused = paused),

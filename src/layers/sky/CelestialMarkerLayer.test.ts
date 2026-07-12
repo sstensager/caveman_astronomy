@@ -97,3 +97,76 @@ describe("CelestialMarkerLayer - active model/observer switching", () => {
     expect(layer.object3D.position.x).toBeCloseTo(100);
   });
 });
+
+describe("CelestialMarkerLayer - spinMode", () => {
+  function stubModelWithMoonDirection(moonDirection: THREE.Vector3): AstronomyModel {
+    return {
+      id: "stub",
+      name: "stub",
+      getState(time: SimulationTime): UniverseState {
+        const identity = { x: 0, y: 0, z: 0, w: 1 };
+        return {
+          time,
+          bodies: {
+            [BodyIds.Sun]: { id: BodyIds.Sun, position: { x: 1, y: 0, z: 0 }, orientation: identity, radius: 1 },
+            [BodyIds.Earth]: { id: BodyIds.Earth, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 },
+            [BodyIds.Moon]: {
+              id: BodyIds.Moon,
+              position: { x: moonDirection.x, y: moonDirection.y, z: moonDirection.z },
+              orientation: identity,
+              radius: 1,
+            },
+          },
+        };
+      },
+    };
+  }
+
+  it("defaults to 'still' - the mesh never rotates as the body orbits", () => {
+    let model = stubModelWithMoonDirection(new THREE.Vector3(1, 0, 0));
+    const layer = new CelestialMarkerLayer(BodyIds.Moon, () => model, () => stubObserver(new THREE.Vector3(0, 0, 0)), () => 0, {
+      id: "test",
+      label: "Test",
+      color: 0xffffff,
+      radius: 100,
+    });
+    layer.update();
+    const initialQuaternion = layer.object3D.quaternion.clone();
+
+    model = stubModelWithMoonDirection(new THREE.Vector3(0, 0, 1));
+    layer.update();
+    expect(layer.object3D.quaternion.equals(initialQuaternion)).toBe(true);
+  });
+
+  it("'tidalLocked' keeps the mesh's local -Z axis pointed at Earth (world origin) as the body orbits", () => {
+    let model = stubModelWithMoonDirection(new THREE.Vector3(1, 0, 0));
+    const layer = new CelestialMarkerLayer(BodyIds.Moon, () => model, () => stubObserver(new THREE.Vector3(0, 0, 0)), () => 0, {
+      id: "test",
+      label: "Test",
+      color: 0xffffff,
+      radius: 100,
+      spinMode: "tidalLocked",
+    });
+
+    // THREE.Object3D.lookAt(target) (unlike Camera) orients the object so
+    // its local +Z axis points at the target, not -Z - verified empirically
+    // here rather than assumed.
+    function localForwardInWorldSpace(): THREE.Vector3 {
+      return new THREE.Vector3(0, 0, 1).applyQuaternion(layer.object3D.quaternion);
+    }
+
+    layer.update();
+    let expectedFacing = new THREE.Vector3(0, 0, 0).sub(layer.object3D.position).normalize();
+    expect(localForwardInWorldSpace().dot(expectedFacing)).toBeCloseTo(1, 5);
+
+    // A different orbital position (different orbit angle, not just a
+    // different distance) - the marker's world position moves, but its
+    // mesh must re-orient each update() so the same local face still
+    // points at Earth's center, not at whatever the mesh's last rotation
+    // happened to be (that's the "still" behavior, tested separately).
+    model = stubModelWithMoonDirection(new THREE.Vector3(0, 1, 1).normalize());
+    layer.update();
+    expectedFacing = new THREE.Vector3(0, 0, 0).sub(layer.object3D.position).normalize();
+    expect(localForwardInWorldSpace().dot(expectedFacing)).toBeCloseTo(1, 5);
+  });
+});

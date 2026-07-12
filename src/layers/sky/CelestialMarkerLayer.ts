@@ -27,6 +27,23 @@ export interface CelestialMarkerOptions {
    *  AstronomyModel is active - both models produce the same apparent
    *  direction, so this fraction applies identically either way. */
   orbitRadiusFraction?: number;
+  /** Optional image (served from public/, e.g. "/textures/moon1.png") mapped
+   *  onto the marker sphere instead of a flat color. There's no Sun-as-light
+   *  source in this scene yet, so this stays an unlit MeshBasicMaterial map
+   *  rather than real Sun-relative shading - a textured but phase-less body,
+   *  same as the flat-color markers it replaces. */
+  textureUrl?: string;
+  /** How the marker's own mesh is oriented as it orbits, independent of the
+   *  body's ORBITAL direction (which update() always computes correctly
+   *  regardless of this setting). Default "still" - the mesh never rotates,
+   *  correct for a flat-colored/unmapped marker where orientation is
+   *  invisible anyway. "tidalLocked" keeps a fixed mesh-local face pointed
+   *  at Earth (world origin - see EarthBase, never repositioned) as the body
+   *  orbits, the way the Moon's real near side always faces Earth. Only
+   *  these two exist for now; per-body rotation (a body spinning on its own
+   *  axis independent of its orbit) is a planned addition, not implemented
+   *  here yet. */
+  spinMode?: "still" | "tidalLocked";
 }
 
 /**
@@ -59,6 +76,7 @@ export class CelestialMarkerLayer implements Layer {
   private readonly baseRadius: number;
   private readonly observerCentered: boolean;
   private readonly orbitRadiusFraction: number;
+  private readonly spinMode: "still" | "tidalLocked";
   private radius: number;
 
   constructor(
@@ -76,12 +94,18 @@ export class CelestialMarkerLayer implements Layer {
     this.radius = options.radius;
     this.observerCentered = options.observerCentered ?? false;
     this.orbitRadiusFraction = options.orbitRadiusFraction ?? 1;
+    this.spinMode = options.spinMode ?? "still";
     this.id = options.id;
     this.label = options.label;
 
     const markerSize = options.radius * CELESTIAL_MARKER_SIZE_RATIO;
     const geometry = new THREE.SphereGeometry(markerSize, 16, 12);
-    const material = new THREE.MeshBasicMaterial({ color: options.color });
+    const material = new THREE.MeshBasicMaterial({ color: options.textureUrl ? 0xffffff : options.color });
+    if (options.textureUrl) {
+      const texture = new THREE.TextureLoader().load(options.textureUrl);
+      texture.colorSpace = THREE.SRGBColorSpace;
+      material.map = texture;
+    }
     this.object3D = new THREE.Mesh(geometry, material);
     this.object3D.name = `CelestialMarker.${options.id}`;
   }
@@ -96,6 +120,9 @@ export class CelestialMarkerLayer implements Layer {
       this.object3D.position.copy(observer.getFrame().worldPosition).add(offset);
     } else {
       this.object3D.position.copy(offset);
+    }
+    if (this.spinMode === "tidalLocked") {
+      this.object3D.lookAt(0, 0, 0);
     }
   }
 
