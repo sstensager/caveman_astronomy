@@ -85,6 +85,7 @@ export interface ControlPanelConfig {
     continents: ToggleConfig;
     rotation: ToggleConfig;
     axis: ToggleConfig;
+    axialTilt: SliderConfig;
   };
   sunMoon: {
     sun: ToggleConfig;
@@ -289,6 +290,7 @@ export class ControlPanel {
       this.registerLayerCheckbox("continents", createCheckbox("Continents", config.earth.continents.checked, config.earth.continents.onChange)).element,
       createCheckbox("Rotation", config.earth.rotation.checked, config.earth.rotation.onChange).element,
       this.registerLayerCheckbox("axis", createCheckbox("Axis", config.earth.axis.checked, config.earth.axis.onChange)).element,
+      createSlider({ ...config.earth.axialTilt, label: "Axial Tilt", format: config.earth.axialTilt.format ?? ((v) => `${v}°`) }).element,
     ];
     return createSection("Earth", true, content);
   }

@@ -1,15 +1,22 @@
 import { BodyIds, type AstronomyModel, type BodyState, type SimulationTime, type UniverseState } from "../types";
-import { addVectors, circularOrbitPosition, inclinedOrbitPosition } from "../vectorMath";
+import { addVectors, ellipticalOrbitPosition, inclinedEllipticalOrbitPosition } from "../vectorMath";
 import {
+  EARTH_ARGUMENT_OF_PERIHELION_DEG,
   EARTH_AXIAL_TILT_DEG,
+  EARTH_ORBIT_ECCENTRICITY,
   EARTH_ORBIT_PERIOD_DAYS,
   EARTH_ORBIT_RADIUS,
+  MOON_ARGUMENT_OF_PERIGEE_DEG,
+  MOON_ASCENDING_NODE_DEG_AT_EPOCH,
+  MOON_NODAL_REGRESSION_PERIOD_DAYS,
+  MOON_ORBIT_ECCENTRICITY,
   MOON_ORBIT_INCLINATION_DEG,
   MOON_ORBIT_PERIOD_DAYS,
   MOON_ORBIT_RADIUS,
 } from "../constants";
 
 const TWO_PI = Math.PI * 2;
+const DEG_TO_RAD = Math.PI / 180;
 const IDENTITY_ORIENTATION = { x: 0, y: 0, z: 0, w: 1 };
 
 // Placeholder display radii - unused this iteration (markers are fixed-size
@@ -25,11 +32,18 @@ const earthTiltRad = (EARTH_AXIAL_TILT_DEG * Math.PI) / 180;
 // model state; see the "known future fork" note in EarthBase.ts.
 const EARTH_ROTATION_AXIS = { x: Math.sin(earthTiltRad), y: Math.cos(earthTiltRad), z: 0 };
 
+const EARTH_ARGUMENT_OF_PERIHELION_RAD = EARTH_ARGUMENT_OF_PERIHELION_DEG * DEG_TO_RAD;
+const MOON_ARGUMENT_OF_PERIGEE_RAD = MOON_ARGUMENT_OF_PERIGEE_DEG * DEG_TO_RAD;
+
 /**
  * A simplified but consistent modern heliocentric model: Sun fixed near the
- * model origin, Earth on a circular orbit around it, Moon on a circular,
- * inclined orbit around Earth's current position. Not to physical scale -
- * see astronomy/constants.ts for the documented simplifications.
+ * model origin, Earth on a real (eccentric) elliptical orbit around it,
+ * Moon on a real elliptical, inclined orbit around Earth's current
+ * position, with the Moon's ascending node regressing over time (real
+ * ~18.6yr period) so eclipse-favorable alignments cycle realistically
+ * instead of recurring every orbit. Distances are not to physical scale -
+ * see astronomy/constants.ts for the documented simplifications;
+ * eccentricities and the nodal regression rate ARE real values.
  */
 export class ModernHeliocentricModel implements AstronomyModel {
   readonly id = "modern-heliocentric";
@@ -43,18 +57,26 @@ export class ModernHeliocentricModel implements AstronomyModel {
       radius: SUN_BODY_RADIUS,
     };
 
-    const earthAngle = (time / EARTH_ORBIT_PERIOD_DAYS) * TWO_PI;
+    const earthMeanAnomaly = (time / EARTH_ORBIT_PERIOD_DAYS) * TWO_PI;
     const earth: BodyState = {
       id: BodyIds.Earth,
       parentId: BodyIds.Sun,
-      position: circularOrbitPosition(EARTH_ORBIT_RADIUS, earthAngle),
+      position: ellipticalOrbitPosition(EARTH_ORBIT_RADIUS, EARTH_ORBIT_ECCENTRICITY, EARTH_ARGUMENT_OF_PERIHELION_RAD, earthMeanAnomaly),
       orientation: IDENTITY_ORIENTATION,
       radius: EARTH_BODY_RADIUS,
       rotationAxis: EARTH_ROTATION_AXIS,
     };
 
-    const moonAngle = (time / MOON_ORBIT_PERIOD_DAYS) * TWO_PI;
-    const moonRelativePosition = inclinedOrbitPosition(MOON_ORBIT_RADIUS, moonAngle, MOON_ORBIT_INCLINATION_DEG);
+    const moonMeanAnomaly = (time / MOON_ORBIT_PERIOD_DAYS) * TWO_PI;
+    const moonAscendingNodeRad = (MOON_ASCENDING_NODE_DEG_AT_EPOCH * DEG_TO_RAD) - (time / MOON_NODAL_REGRESSION_PERIOD_DAYS) * TWO_PI;
+    const moonRelativePosition = inclinedEllipticalOrbitPosition(
+      MOON_ORBIT_RADIUS,
+      MOON_ORBIT_ECCENTRICITY,
+      MOON_ARGUMENT_OF_PERIGEE_RAD,
+      moonMeanAnomaly,
+      MOON_ORBIT_INCLINATION_DEG,
+      moonAscendingNodeRad,
+    );
     const moon: BodyState = {
       id: BodyIds.Moon,
       parentId: BodyIds.Earth,

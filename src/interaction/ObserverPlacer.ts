@@ -48,7 +48,12 @@ export class ObserverPlacer {
   setArmed(armed: boolean): void {
     this.armed = armed;
     this.isPointerDown = false;
-    this.domElement.style.cursor = armed ? "crosshair" : "default";
+    // Only actively claims the cursor while armed - doesn't reset it to
+    // "default" on disarm, since that would clobber whichever camera rig's
+    // own idle cursor (e.g. GroundCameraRig's "grab" for look-drag) is
+    // meant to be showing instead. See CameraManager.setPlacementModeActive
+    // / GroundCameraRig.setInteractionEnabled for the other side of this.
+    if (armed) this.domElement.style.cursor = "crosshair";
   }
 
   private onPointerDown = (event: PointerEvent): void => {

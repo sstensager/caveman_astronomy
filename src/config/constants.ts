@@ -113,15 +113,17 @@ export const CELESTIAL_MARKER_SIZE_RATIO = 0.02;
 // Globe-tier Sun/Moon markers project at a FRACTION of CELESTIAL_GLOBE_RADIUS
 // rather than flattened onto it like the fixed stars - they're meant to read
 // as orbiting bodies inside the celestial sphere, not smeared onto its
-// surface. Artistic, not physically-proportional (matches this app's
-// existing "exaggerated for legibility" scale philosophy - see
-// astronomy/constants.ts's MOON_ORBIT_RADIUS comment): using the real
-// ~20:1 Sun:Moon orbital-radius ratio would place the Moon marker
-// indistinguishably close to Earth in a 25-unit globe. Applies identically
-// regardless of which AstronomyModel is active - this is a pure display
-// choice, not model-specific.
-export const SUN_GLOBE_ORBIT_FRACTION = 0.7;
-export const MOON_GLOBE_ORBIT_FRACTION = 0.35;
+// surface. Still artistic, not physically-proportional - the real Sun:Moon
+// distance ratio is ~389:1 (Sun ~23,455 Earth radii away, Moon ~60), which
+// would place the Moon indistinguishably close to Earth's own EARTH_RADIUS=5
+// surface in a 25-unit globe - but pushed as far toward the real ordering as
+// this fixed-size shell allows: Sun near the shell's edge (it should read as
+// "very far"), Moon pulled in close to Earth (it should read as "comparatively
+// very close"), instead of the two sitting at a similar, arbitrary-feeling
+// distance from each other. Applies identically regardless of which
+// AstronomyModel is active - this is a pure display choice, not model-specific.
+export const SUN_GLOBE_ORBIT_FRACTION = 0.95;
+export const MOON_GLOBE_ORBIT_FRACTION = 0.3;
 
 export const TEXTURES = {
   continents: "/textures/earth1.png",

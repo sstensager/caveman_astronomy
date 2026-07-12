@@ -41,10 +41,14 @@ export class GroundCameraRig implements CameraRig {
     this.lookControls.setActive(active);
   }
 
-  /** No-op: Ground's look-drag doesn't compete with observer placement -
-   *  placement in Ground mode is WASD-driven (GroundMoveControls), not a
-   *  pointer-drag gesture, so there's nothing here to suspend. */
-  setInteractionEnabled(_enabled: boolean): void {}
+  /** Suspends/restores look-drag the same way OrbitCameraRig suspends
+   *  orbit-drag - both drag-to-look and drag-to-place-observer are pointer-
+   *  drag gestures on the same element, so they'd otherwise fight over the
+   *  same event. WASD movement (GroundMoveControls) is unaffected either
+   *  way, since it isn't a pointer gesture. */
+  setInteractionEnabled(enabled: boolean): void {
+    this.lookControls.setActive(enabled);
+  }
 
   update(): void {
     this.syncParent();

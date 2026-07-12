@@ -42,6 +42,7 @@ import {
   CELESTIAL_SPHERE_WIREFRAME_OPACITY_DEFAULT,
   COLORS,
   DEFAULT_LATITUDE_DEG,
+  EARTH_RADIUS,
   DEFAULT_LONGITUDE_DEG,
   MOON_GLOBE_ORBIT_FRACTION,
   STAR_LIMITING_MAGNITUDE_MAX,
@@ -55,6 +56,7 @@ import {
   TIME_STEP_MONTH_DAYS,
   TIME_STEP_YEAR_DAYS,
 } from "./config/constants";
+import { EARTH_AXIAL_TILT_DEG } from "./astronomy/constants";
 
 const container = document.querySelector<HTMLDivElement>("#app");
 if (!container) throw new Error("#app container not found");
@@ -69,11 +71,12 @@ container.appendChild(renderer.domElement);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(COLORS.background);
 
-// Flat, non-toggleable scene lighting so Earth reads as a sphere.
-// Replaced by a real Sun layer in a later milestone.
-scene.add(new THREE.AmbientLight(0xffffff, 0.6));
+// Ambient kept low (not zero) so the night side reads as unlit rather than
+// pure black - the terminator itself comes entirely from keyLight, whose
+// position is re-derived every frame from the active model's actual Sun
+// direction (see the render loop below), not fixed here.
+scene.add(new THREE.AmbientLight(0xffffff, 0.25));
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
-keyLight.position.set(5, 3, 5);
 scene.add(keyLight);
 
 // --- Simulation clock -----------------------------------------------------
@@ -256,6 +259,9 @@ const observerMarkersLayer: Layer = {
     observerMarkersVisible = visible;
     observerRegistry.all().forEach((entry) => entry.marker.setVisible(visible));
   },
+  update: () => {
+    observerRegistry.all().forEach((entry) => entry.marker.update?.());
+  },
 };
 
 layers.register(earthBase);
@@ -416,15 +422,21 @@ const observerPlacer = new ObserverPlacer(
   () => observerRegistry.getActive().station,
 );
 
-// Drag-to-place only applies to Space/Celestial Sphere View (Ground View
-// uses WASD instead - dragging there is GroundLookControls' look gesture).
-// Tracks the checkbox's own intent separately from camera mode so toggling
-// either one re-derives the correct armed state.
+// Drag-to-place works in every camera mode, including Ground View now -
+// WASD (GroundMoveControls) still works there too, as a complementary way
+// to move; drag-to-place additionally suspends GroundLookControls while
+// armed (see GroundCameraRig.setInteractionEnabled) since both are pointer-
+// drag gestures on the same element and would otherwise fight over the same
+// event. Tracks the checkbox's own intent separately from camera mode so
+// toggling either one re-derives the correct armed state.
 let moveObserverChecked = false;
 const applyPlacementArming = (): void => {
-  const armed = moveObserverChecked && cameraManager.getMode() !== CameraMode.Ground;
-  observerPlacer.setArmed(armed);
+  const armed = moveObserverChecked;
+  // setPlacementModeActive first: in Ground View it suspends
+  // GroundLookControls, which resets the cursor to "default" - setArmed
+  // must run AFTER so its "crosshair" cursor is the one that sticks.
   cameraManager.setPlacementModeActive(armed);
+  observerPlacer.setArmed(armed);
 };
 
 function addObserver(): void {
@@ -496,6 +508,13 @@ const panelConfig: ControlPanelConfig = {
     // Starts unchecked/paused for this episode - see earthBase.rotationEnabled = false above.
     rotation: { checked: false, onChange: (v) => (earthBase.rotationEnabled = v) },
     axis: { checked: true, onChange: (v) => layers.show({ axis: v }) },
+    axialTilt: {
+      value: EARTH_AXIAL_TILT_DEG,
+      min: 0,
+      max: 90,
+      step: 0.5,
+      onChange: (v) => earthBase.setAxialTilt(v),
+    },
   },
   astronomyModel: {
     entries: modelRegistry.all().map((entry) => ({ id: entry.id, label: entry.label })),
@@ -690,12 +709,31 @@ window.addEventListener("resize", onResize);
 onResize();
 
 const cameraDirection = new THREE.Vector3();
+const sunLightDirection = new THREE.Vector3();
 
 renderer.setAnimationLoop(() => {
   const deltaSeconds = simClock.tick();
   layers.update(deltaSeconds);
   groundMoveControls.update(deltaSeconds);
   cameraManager.update();
+
+  // Real day/night terminator: the key light always comes from the active
+  // model's actual current Sun direction. Earth's mesh sits at the world
+  // origin regardless of model (see EarthBase), but the model's own
+  // coordinate origin does NOT always coincide with Earth - Heliocentric
+  // puts the Sun near origin and moves Earth, Geocentric does the
+  // opposite - so this must use the RELATIVE vector (Sun - Earth), exactly
+  // like GroundObserver.getDirectionTo, not either absolute position
+  // alone. DirectionalLight only cares about direction, not distance, but
+  // a position far outside Earth keeps the math the same shape as a real
+  // light source.
+  const universeState = getActiveModel().getState(getSimulationTime());
+  const sunBody = universeState.bodies[BodyIds.Sun];
+  const earthBody = universeState.bodies[BodyIds.Earth];
+  sunLightDirection
+    .set(sunBody.position.x - earthBody.position.x, sunBody.position.y - earthBody.position.y, sunBody.position.z - earthBody.position.z)
+    .normalize();
+  keyLight.position.copy(sunLightDirection).multiplyScalar(EARTH_RADIUS * 20);
 
   const activeLatLon = observerRegistry.getActive().station.getLatLon();
   controlPanel.setObserverLatLon(activeLatLon.latDeg, activeLatLon.lonDeg);
