@@ -75,6 +75,18 @@ export function createSlider(options: SliderOptions): SliderControl {
   return { element, input };
 }
 
+/** A single standalone action button - not a mutually-exclusive group like
+ *  createButtonGroup (no "active" state), just a momentary click action
+ *  (e.g. "Reset to 23.44deg" next to a slider). */
+export function createButton(label: string, onClick: () => void): HTMLButtonElement {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "control-button";
+  button.textContent = label;
+  button.addEventListener("click", onClick);
+  return button;
+}
+
 export interface ButtonGroupItem {
   key: string;
   label: string;

@@ -29,7 +29,7 @@ import { ControlPanel, type ControlPanelConfig, type ViewModeDef } from "./ui/Co
 import { SCENE_PRESETS } from "./ui/scenePresets";
 import { StarPicker } from "./interaction/StarPicker";
 import { SelectedStarMarker } from "./interaction/SelectedStarMarker";
-import { ObserverPlacer } from "./interaction/ObserverPlacer";
+import { ObserverDragHandler } from "./interaction/ObserverDragHandler";
 import type { HemisphereMode } from "./utils/hemisphereFade";
 import type { Layer } from "./layers/Layer";
 import {
@@ -414,30 +414,34 @@ const groundMoveControls = new GroundMoveControls(
   () => cameraManager.getActiveCamera(),
 );
 
-const observerPlacer = new ObserverPlacer(
+// Direct-manipulation drag-to-place: hover any observer's pin (in any
+// camera mode, including Ground View now) for a hand cursor, then drag it -
+// no separate "arm" checkbox. WASD (GroundMoveControls) still works
+// alongside it in Ground View, as a complementary way to move the active
+// observer specifically. Dragging suspends the active camera rig's own
+// pointer interaction for its duration (see GroundCameraRig/OrbitCameraRig
+// setInteractionEnabled) since both are pointer-drag gestures on the same
+// element and would otherwise fight over the same event; hovering alone
+// does not suspend anything, only picking up a marker does.
+new ObserverDragHandler(
   () => cameraManager.getActiveCamera(),
   renderer.domElement,
   earthBase.mesh,
   earthBase.rotationGroup,
-  () => observerRegistry.getActive().station,
+  () => observerRegistry.all(),
+  (hovering) => {
+    // Only actively claims the cursor while hovering - doesn't reset it on
+    // hover-out, since that would clobber whichever camera rig's own idle
+    // cursor is meant to be showing instead (see ObserverDragHandler and
+    // the matching OrbitCameraRig/GroundCameraRig setInteractionEnabled
+    // cursor-reclaim pattern this mirrors).
+    if (hovering) renderer.domElement.style.cursor = "pointer";
+  },
+  (dragging) => {
+    cameraManager.setPlacementModeActive(dragging);
+    if (dragging) renderer.domElement.style.cursor = "grabbing";
+  },
 );
-
-// Drag-to-place works in every camera mode, including Ground View now -
-// WASD (GroundMoveControls) still works there too, as a complementary way
-// to move; drag-to-place additionally suspends GroundLookControls while
-// armed (see GroundCameraRig.setInteractionEnabled) since both are pointer-
-// drag gestures on the same element and would otherwise fight over the same
-// event. Tracks the checkbox's own intent separately from camera mode so
-// toggling either one re-derives the correct armed state.
-let moveObserverChecked = false;
-const applyPlacementArming = (): void => {
-  const armed = moveObserverChecked;
-  // setPlacementModeActive first: in Ground View it suspends
-  // GroundLookControls, which resets the cursor to "default" - setArmed
-  // must run AFTER so its "crosshair" cursor is the one that sticks.
-  cameraManager.setPlacementModeActive(armed);
-  observerPlacer.setArmed(armed);
-};
 
 function addObserver(): void {
   const number = nextObserverNumber;
@@ -462,7 +466,6 @@ function switchCameraMode(mode: CameraMode): void {
   cameraManager.setMode(mode);
   controlPanel.setActiveCameraMode(mode);
   groundMoveControls.setActive(mode === CameraMode.Ground);
-  applyPlacementArming();
   applyGlobeTierVisibility();
   syncGlobeTierCheckboxes();
 }
@@ -532,13 +535,6 @@ const panelConfig: ControlPanelConfig = {
       controlPanel.setActiveObserver(id);
     },
     onAddObserver: addObserver,
-    moveObserver: {
-      checked: false,
-      onChange: (v) => {
-        moveObserverChecked = v;
-        applyPlacementArming();
-      },
-    },
     markersVisible: { checked: observerMarkersVisible, onChange: (v) => layers.show({ observerMarkers: v }) },
     // Unlike Sun/Moon's globe-tier markers, Zenith/AltAzGrid are always
     // observer-centered (see ZenithLayer/AltAzGridLayer) - the globe-tier

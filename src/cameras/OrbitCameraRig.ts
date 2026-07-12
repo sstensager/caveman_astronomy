@@ -45,9 +45,9 @@ export class OrbitCameraRig implements CameraRig {
   }
 
   // Reclaims the idle cursor when enabled, mirroring GroundCameraRig - see
-  // ObserverPlacer.setArmed for why it only claims "crosshair" while armed
-  // and never resets to "default" itself, which would otherwise leave
-  // whichever cursor was showing at arm-time stuck after disarming.
+  // ObserverDragHandler for why "pointer"/"grabbing" are only ever actively
+  // claimed, never reset to "default" directly, which would otherwise leave
+  // whichever cursor was showing stuck after the drag/hover ends.
   setInteractionEnabled(enabled: boolean): void {
     this.controls.enabled = enabled;
     if (enabled) this.domElement.style.cursor = "default";

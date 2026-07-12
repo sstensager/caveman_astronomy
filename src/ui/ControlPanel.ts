@@ -2,6 +2,7 @@ import { CameraMode } from "../cameras/CameraMode";
 import type { HemisphereMode } from "../utils/hemisphereFade";
 import type { StarRecord } from "../astronomy/starCatalog";
 import {
+  createButton,
   createButtonGroup,
   createCheckbox,
   createPlaceholder,
@@ -70,7 +71,6 @@ export interface ObserverPanelConfig {
   activeId: string;
   onSwitchActive: (id: string) => void;
   onAddObserver: () => void;
-  moveObserver: ToggleConfig;
   markersVisible: ToggleConfig;
   zenith: ToggleConfig;
   grid: ToggleConfig;
@@ -285,12 +285,24 @@ export class ControlPanel {
   }
 
   private buildEarthSection(config: ControlPanelConfig): HTMLElement {
+    // Captured at construction time, so "reset" always means "back to
+    // whatever default this panel was built with" (23.44deg in practice -
+    // see main.ts's EARTH_AXIAL_TILT_DEG wiring) without ControlPanel
+    // needing its own import of that astronomy constant.
+    const defaultTiltDeg = config.earth.axialTilt.value;
+    const tiltSlider = createSlider({ ...config.earth.axialTilt, label: "Axial Tilt", format: config.earth.axialTilt.format ?? ((v) => `${v}°`) });
+    const resetTiltButton = createButton(`Reset to ${defaultTiltDeg}°`, () => {
+      tiltSlider.input.value = String(defaultTiltDeg);
+      tiltSlider.input.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
     const content = [
       this.registerLayerCheckbox("earthBase", createCheckbox("Visible", config.earth.visible.checked, config.earth.visible.onChange)).element,
       this.registerLayerCheckbox("continents", createCheckbox("Continents", config.earth.continents.checked, config.earth.continents.onChange)).element,
       createCheckbox("Rotation", config.earth.rotation.checked, config.earth.rotation.onChange).element,
       this.registerLayerCheckbox("axis", createCheckbox("Axis", config.earth.axis.checked, config.earth.axis.onChange)).element,
-      createSlider({ ...config.earth.axialTilt, label: "Axial Tilt", format: config.earth.axialTilt.format ?? ((v) => `${v}°`) }).element,
+      tiltSlider.element,
+      resetTiltButton,
     ];
     return createSection("Earth", true, content);
   }
@@ -337,7 +349,7 @@ export class ControlPanel {
       switcherElement,
       addButton,
       this.observerLatLonLabel,
-      createCheckbox("Move Observer", obs.moveObserver.checked, obs.moveObserver.onChange).element,
+      createPlaceholder("Hover an observer pin for a hand cursor, then drag to move it."),
       this.registerLayerCheckbox("observerMarkers", createCheckbox("Show Observer Markers", obs.markersVisible.checked, obs.markersVisible.onChange))
         .element,
       this.registerLayerCheckbox("zenith", createCheckbox("Show Zenith", obs.zenith.checked, obs.zenith.onChange)).element,

@@ -39,7 +39,7 @@ export class CameraManager {
 
   /** Suspends/restores the ACTIVE rig's own pointer interaction (e.g.
    *  OrbitControls' drag-to-orbit) so a drag gesture can be repurposed for
-   *  observer placement instead - see ObserverPlacer. */
+   *  observer placement instead - see ObserverDragHandler. */
   setPlacementModeActive(active: boolean): void {
     this.rigs[this.mode].setInteractionEnabled(!active);
   }
