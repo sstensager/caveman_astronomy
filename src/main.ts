@@ -313,12 +313,21 @@ layers.show(defaultLayerVisibility);
 const cameraManager = new CameraManager(() => observerRegistry.getActive().station.object3D, renderer.domElement);
 
 // The globe-scale ("explanatory globe") tier (Sun/Moon globe markers, the
-// wireframe shell, and its own star field) is only geometrically valid
-// viewed from outside it, since all four are Earth-centered - see
-// CelestialSphereShell / CELESTIAL_GLOBE_RADIUS. From an off-center
-// Ground/Space camera it shows up wildly parallax-shifted from its sky-tier
-// counterpart (a second Sun/Moon dot, or a whole second star field that
-// doesn't line up with the real one).
+// wireframe shell, and its own star field) is Earth-centered - see
+// CelestialSphereShell / CELESTIAL_GLOBE_RADIUS - so every toggle for it is
+// freely available in Space View: fly wherever you want and turn on
+// whatever you want to look at, with no camera-mode-based restriction.
+// Ground View is the one deliberate exception: standing at
+// EARTH_RADIUS-scale on Earth's surface puts the observer very close to a
+// CELESTIAL_GLOBE_RADIUS-scale diagram (5 vs 25 units), so its Sun/Moon/
+// stars show up wildly parallax-shifted from the real sky-tier ones right
+// next to them - almost never what you'd want, so it auto-hides there. This
+// is a Ground-View-specific carve-out, not a general "pick a mode to see
+// content" restriction - see the plan doc/conversation history for why an
+// earlier version gated this by a whole separate "Celestial Sphere" camera
+// mode instead, and why that turned out to be an unnecessary restriction
+// (that mode was never anything but Space View with a different zoom-range
+// preset - see CameraManager).
 //
 // Gating this ONLY inside a checkbox's onChange (as an earlier version of
 // this file did) isn't enough: scene presets set visibility via
@@ -329,7 +338,7 @@ const cameraManager = new CameraManager(() => observerRegistry.getActive().stati
 // applyGlobeTierVisibility() re-derives ALL FOUR gated layers from tracked
 // "wanted" state every time either the wanted state OR the camera mode
 // changes, so the invariant holds regardless of which path changed it.
-const globeTierAllowed = (): boolean => cameraManager.getMode() === CameraMode.CelestialSphere;
+const globeTierAllowed = (): boolean => cameraManager.getMode() !== CameraMode.Ground;
 
 let sunVisibleWanted = true;
 let moonVisibleWanted = true;
@@ -354,10 +363,10 @@ const applyGlobeTierVisibility = (): void => {
 // "on" while nothing is actually rendered (see applyGlobeTierVisibility).
 // This must NOT be called from the checkboxes' own onChange, though: it
 // would immediately re-read `allowed` as false whenever the user checks the
-// box outside Celestial Sphere mode and snap it back to unchecked, fighting
-// the very click that triggered it. Only call this from paths where the
-// change originates from something OTHER than the checkbox itself -
-// camera-mode switches and scene presets.
+// box while in Ground View and snap it back to unchecked, fighting the very
+// click that triggered it. Only call this from paths where the change
+// originates from something OTHER than the checkbox itself - camera-mode
+// switches and scene presets.
 const syncGlobeTierCheckboxes = (): void => {
   const allowed = globeTierAllowed();
   controlPanel?.syncLayerToggles({
@@ -369,7 +378,6 @@ const syncGlobeTierCheckboxes = (): void => {
 const viewModes: ViewModeDef[] = [
   { mode: CameraMode.Space, label: "Space View" },
   { mode: CameraMode.Ground, label: "Ground View" },
-  { mode: CameraMode.CelestialSphere, label: "Celestial Sphere" },
 ];
 
 // --- UI ---------------------------------------------------------------
@@ -432,11 +440,12 @@ function addObserver(): void {
 
 // Shared by the Camera section's own buttons AND by anything that needs to
 // switch mode as a side effect (see celestialSphere/stars.celestialSphere
-// onChange below) - the globe tier is only ever visible from the Celestial
-// Sphere camera (see globeTierAllowed), so checking "Celestial Sphere
-// visible" or "Celestial Sphere Stars visible" from Ground/Space View would
-// otherwise leave the checkbox checked with nothing on screen to show for
-// it - reported as "clicking celestial sphere brings up nothing."
+// onChange below) - the globe tier is hidden in Ground View (see
+// globeTierAllowed), so checking "Celestial Sphere visible" or "Celestial
+// Sphere Stars visible" while there would otherwise leave the checkbox
+// checked with nothing on screen to show for it - reported as "clicking
+// celestial sphere brings up nothing" back when that gating covered Space
+// View too.
 function switchCameraMode(mode: CameraMode): void {
   cameraManager.setMode(mode);
   controlPanel.setActiveCameraMode(mode);
@@ -543,8 +552,8 @@ const panelConfig: ControlPanelConfig = {
       checked: false,
       onChange: (v) => {
         celestialSphereShellWanted = v;
-        if (v && cameraManager.getMode() !== CameraMode.CelestialSphere) {
-          switchCameraMode(CameraMode.CelestialSphere);
+        if (v && cameraManager.getMode() === CameraMode.Ground) {
+          switchCameraMode(CameraMode.Space);
         } else {
           applyGlobeTierVisibility();
         }
@@ -597,8 +606,8 @@ const panelConfig: ControlPanelConfig = {
         checked: false,
         onChange: (v) => {
           celestialSphereStarsWanted = v;
-          if (v && cameraManager.getMode() !== CameraMode.CelestialSphere) {
-            switchCameraMode(CameraMode.CelestialSphere);
+          if (v && cameraManager.getMode() === CameraMode.Ground) {
+            switchCameraMode(CameraMode.Space);
           } else {
             applyGlobeTierVisibility();
           }

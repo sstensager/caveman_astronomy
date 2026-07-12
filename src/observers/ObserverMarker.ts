@@ -54,8 +54,8 @@ export interface ObserverMarkerOptions {
  * single vertex, fixed gl_PointSize, no distance attenuation) with a pin
  * silhouette instead of a ring. Not dual-tier like Sun/Moon markers - it
  * sits at the observer's true EARTH_RADIUS-scale world position, which
- * renders correctly in Space/Ground/CelestialSphere modes without
- * reprojection onto a celestial sphere.
+ * renders correctly in both Space and Ground modes without reprojection
+ * onto a celestial sphere.
  */
 export class ObserverMarker implements Layer {
   readonly id: string;

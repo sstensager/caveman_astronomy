@@ -77,7 +77,7 @@ export const SCENE_PRESETS: ScenePreset[] = [
       sunMarker: true,
       moonMarker: true,
     },
-    cameraMode: CameraMode.CelestialSphere,
+    cameraMode: CameraMode.Space,
   },
   {
     id: "teachingDefault",

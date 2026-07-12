@@ -3,9 +3,15 @@ import { CameraMode } from "./CameraMode";
 import type { CameraRig } from "./CameraRig";
 import { OrbitCameraRig } from "./OrbitCameraRig";
 import { GroundCameraRig } from "./GroundCameraRig";
-import { CELESTIAL_GLOBE_RADIUS, EARTH_RADIUS } from "../config/constants";
+import { EARTH_RADIUS } from "../config/constants";
 
-/** Owns all camera rigs and switches which one is active/rendered. */
+/** Owns all camera rigs and switches which one is active/rendered. Space is
+ *  a single free-roam orbit rig covering everything from a close Earth flyby
+ *  out to the celestial-sphere diagram scale - there used to be a second
+ *  "Celestial Sphere" mode/rig here, but it was the exact same OrbitCameraRig
+ *  with a different zoom-range preset, not a different camera or rendering
+ *  path. Its range is folded into Space's below instead of gating content
+ *  visibility by which "mode" you're in. */
 export class CameraManager {
   private readonly rigs: Record<CameraMode, CameraRig>;
   private mode: CameraMode;
@@ -19,12 +25,6 @@ export class CameraManager {
         maxDistance: EARTH_RADIUS * 40,
       }),
       [CameraMode.Ground]: new GroundCameraRig(getActiveStationObject3D, domElement),
-      [CameraMode.CelestialSphere]: new OrbitCameraRig({
-        domElement,
-        initialPosition: [CELESTIAL_GLOBE_RADIUS * 1.8, CELESTIAL_GLOBE_RADIUS * 1.2, CELESTIAL_GLOBE_RADIUS * 1.8],
-        minDistance: CELESTIAL_GLOBE_RADIUS * 1.1,
-        maxDistance: CELESTIAL_GLOBE_RADIUS * 5,
-      }),
     };
     this.mode = initialMode;
     this.rigs[this.mode].setActive(true);
