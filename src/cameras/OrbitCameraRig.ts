@@ -42,6 +42,10 @@ export class OrbitCameraRig implements CameraRig {
     this.controls.enabled = active;
   }
 
+  setInteractionEnabled(enabled: boolean): void {
+    this.controls.enabled = enabled;
+  }
+
   update(): void {
     this.controls.update();
   }

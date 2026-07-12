@@ -13,20 +13,41 @@ import { GroundLookControls } from "./GroundLookControls";
 export class GroundCameraRig implements CameraRig {
   readonly camera: THREE.PerspectiveCamera;
   private readonly lookControls: GroundLookControls;
+  private readonly getActiveStation: () => THREE.Object3D;
+  private currentParent?: THREE.Object3D;
 
-  constructor(groundStation: THREE.Object3D, domElement: HTMLElement) {
+  constructor(getActiveStation: () => THREE.Object3D, domElement: HTMLElement) {
     this.camera = new THREE.PerspectiveCamera(60, 1, 0.05, 20000);
     this.camera.position.set(0, 0, 0);
-    groundStation.add(this.camera);
+    this.getActiveStation = getActiveStation;
+    this.syncParent();
 
     this.lookControls = new GroundLookControls(this.camera, domElement);
+  }
+
+  /** Re-parents the camera onto whichever observer is currently active,
+   *  cheap no-op in the common case (same station as last frame). Camera's
+   *  local position always stays (0,0,0) - reparenting under a THREE.js
+   *  Object3D preserves local transform, reinterpreting it in the new
+   *  parent's space, which is exactly what's wanted here. */
+  private syncParent(): void {
+    const station = this.getActiveStation();
+    if (station === this.currentParent) return;
+    station.add(this.camera);
+    this.currentParent = station;
   }
 
   setActive(active: boolean): void {
     this.lookControls.setActive(active);
   }
 
+  /** No-op: Ground's look-drag doesn't compete with observer placement -
+   *  placement in Ground mode is WASD-driven (GroundMoveControls), not a
+   *  pointer-drag gesture, so there's nothing here to suspend. */
+  setInteractionEnabled(_enabled: boolean): void {}
+
   update(): void {
+    this.syncParent();
     this.lookControls.update();
   }
 

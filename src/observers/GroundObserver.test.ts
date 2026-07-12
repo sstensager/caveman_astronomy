@@ -34,7 +34,7 @@ function stateWithBodyAt(bodyId: BodyId, position: THREE.Vector3): UniverseState
 
 describe("GroundObserver.getFrame", () => {
   it("derives up/north/east correctly at the equator, lon=0", () => {
-    const observer = new GroundObserver(equatorStationFixture());
+    const observer = new GroundObserver("ground", equatorStationFixture());
     const frame = observer.getFrame();
 
     expect(frame.up.x).toBeCloseTo(1);
@@ -53,7 +53,7 @@ describe("GroundObserver.getFrame", () => {
   });
 
   it("keeps up/north/east mutually perpendicular and unit length", () => {
-    const observer = new GroundObserver(equatorStationFixture());
+    const observer = new GroundObserver("ground", equatorStationFixture());
     const { up, north, east } = observer.getFrame();
     expect(up.length()).toBeCloseTo(1);
     expect(north!.length()).toBeCloseTo(1);
@@ -66,7 +66,7 @@ describe("GroundObserver.getFrame", () => {
 
 describe("GroundObserver.getDirectionTo", () => {
   it("returns a unit vector pointing from Earth's center toward the body", () => {
-    const observer = new GroundObserver(equatorStationFixture());
+    const observer = new GroundObserver("ground", equatorStationFixture());
     const state = stateWithBodyAt(BodyIds.Sun, new THREE.Vector3(0, 0, 500));
     const direction = observer.getDirectionTo(BodyIds.Sun, state);
     expect(direction.length()).toBeCloseTo(1);
@@ -76,13 +76,13 @@ describe("GroundObserver.getDirectionTo", () => {
   });
 
   it("throws for an unknown body id", () => {
-    const observer = new GroundObserver(equatorStationFixture());
+    const observer = new GroundObserver("ground", equatorStationFixture());
     const state = stateWithBodyAt(BodyIds.Sun, new THREE.Vector3(1, 0, 0));
     expect(() => observer.getDirectionTo("mars" as BodyId, state)).toThrow();
   });
 
   it("hand-computed: Sun directly overhead reads as zenith (direction parallel to local up)", () => {
-    const observer = new GroundObserver(equatorStationFixture());
+    const observer = new GroundObserver("ground", equatorStationFixture());
     const frame = observer.getFrame();
     // Put the Sun far along this observer's own "up" direction.
     const sunPosition = frame.up.clone().multiplyScalar(1000);
@@ -92,7 +92,7 @@ describe("GroundObserver.getDirectionTo", () => {
   });
 
   it("hand-computed: Sun on the horizon reads as perpendicular to local up", () => {
-    const observer = new GroundObserver(equatorStationFixture());
+    const observer = new GroundObserver("ground", equatorStationFixture());
     const frame = observer.getFrame();
     // Put the Sun far along this observer's "north" direction - tangent to
     // the sphere, i.e. exactly on the horizon.

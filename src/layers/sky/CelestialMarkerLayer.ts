@@ -11,15 +11,40 @@ export interface CelestialMarkerOptions {
   color: number;
   /** The celestial sphere radius to project this marker onto. */
   radius: number;
+  /** When true, the marker is offset by the observer's live world position
+   *  instead of assuming it sits at the scene origin - exact rather than a
+   *  negligible approximation once the sphere radius isn't huge relative to
+   *  the observer's distance from Earth's center. See GroundObserver. */
+  observerCentered?: boolean;
+  /** Fraction (0-1] of `radius` this marker actually projects onto, default
+   *  1 (flattened onto the sphere's surface, matching the fixed stars -
+   *  correct for the sky tier, where real Sun/Moon parallax against the
+   *  effectively-infinite backdrop is genuinely negligible). Set below 1 to
+   *  place the marker visibly INSIDE the sphere instead - used for the
+   *  globe tier, where Sun/Moon are meant to read as orbiting bodies within
+   *  a fixed-star backdrop, not smeared onto its surface alongside the
+   *  stars. This is a pure display choice, independent of which
+   *  AstronomyModel is active - both models produce the same apparent
+   *  direction, so this fraction applies identically either way. */
+  orbitRadiusFraction?: number;
 }
 
 /**
  * A generic, body-agnostic marker on a celestial sphere. NEVER computes its
  * own orbital position - each update() call is exactly:
- * model.getState() -> observer.getDirectionTo() -> projectDirectionToSphere().
+ * getModel().getState() -> getObserver().getDirectionTo() -> projectDirectionToSphere().
  * Instantiated once per (body, sphere radius) pair - see main.ts, where
  * "Show Sun"/"Show Moon" each fuse a sky-scale and globe-scale instance of
  * this same class under one CompositeLayer.
+ *
+ * Takes LAZY getModel/getObserver getters rather than fixed instances -
+ * this is what makes "exactly one AstronomyModel governs the universe at a
+ * time" and "the active observer drives every observer-relative
+ * calculation" actually true: every marker (sky and globe tier alike)
+ * resolves the same shared getters fresh each frame, so switching the
+ * active model or active observer changes every marker in lockstep, with
+ * no marker ever holding a stale reference to a no-longer-active model or
+ * observer. See AstronomyModelRegistry / ObserverRegistry in main.ts.
  */
 export class CelestialMarkerLayer implements Layer {
   readonly id: string;
@@ -28,23 +53,29 @@ export class CelestialMarkerLayer implements Layer {
   readonly object3D: THREE.Mesh;
 
   private readonly bodyId: BodyId;
-  private readonly model: AstronomyModel;
-  private readonly observer: Observer;
+  private readonly getModel: () => AstronomyModel;
+  private readonly getObserver: () => Observer;
   private readonly getSimulationTime: () => SimulationTime;
-  private readonly radius: number;
+  private readonly baseRadius: number;
+  private readonly observerCentered: boolean;
+  private readonly orbitRadiusFraction: number;
+  private radius: number;
 
   constructor(
     bodyId: BodyId,
-    model: AstronomyModel,
-    observer: Observer,
+    getModel: () => AstronomyModel,
+    getObserver: () => Observer,
     getSimulationTime: () => SimulationTime,
     options: CelestialMarkerOptions,
   ) {
     this.bodyId = bodyId;
-    this.model = model;
-    this.observer = observer;
+    this.getModel = getModel;
+    this.getObserver = getObserver;
     this.getSimulationTime = getSimulationTime;
+    this.baseRadius = options.radius;
     this.radius = options.radius;
+    this.observerCentered = options.observerCentered ?? false;
+    this.orbitRadiusFraction = options.orbitRadiusFraction ?? 1;
     this.id = options.id;
     this.label = options.label;
 
@@ -57,12 +88,26 @@ export class CelestialMarkerLayer implements Layer {
 
   update(): void {
     const time = this.getSimulationTime();
-    const state = this.model.getState(time);
-    const direction = this.observer.getDirectionTo(this.bodyId, state);
-    this.object3D.position.copy(projectDirectionToSphere(direction, this.radius));
+    const state = this.getModel().getState(time);
+    const observer = this.getObserver();
+    const direction = observer.getDirectionTo(this.bodyId, state);
+    const offset = projectDirectionToSphere(direction, this.radius * this.orbitRadiusFraction);
+    if (this.observerCentered) {
+      this.object3D.position.copy(observer.getFrame().worldPosition).add(offset);
+    } else {
+      this.object3D.position.copy(offset);
+    }
   }
 
   setVisible(visible: boolean): void {
     this.object3D.visible = visible;
+  }
+
+  /** Rescales the marker dot to stay proportionally sized as the parent
+   *  celestial sphere's display radius changes, and updates the radius
+   *  future projectDirectionToSphere() calls use. */
+  setRadius(radius: number): void {
+    this.radius = radius;
+    this.object3D.scale.setScalar(radius / this.baseRadius);
   }
 }

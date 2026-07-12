@@ -2,6 +2,7 @@ import * as THREE from "three";
 import type { Observer, ObserverFrame } from "./Observer";
 import { BodyIds } from "../astronomy/types";
 import type { BodyId, UniverseState, Vector3Like } from "../astronomy/types";
+import { computeNorthEast } from "../utils/geo";
 
 const WORLD_POLAR_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -10,21 +11,25 @@ function toVector3(v: Vector3Like): THREE.Vector3 {
 }
 
 /**
- * An observer standing on Earth's surface, wired to EarthBase's live,
- * spin-affected groundStation transform for its local horizon frame (up/
- * north/east). Direction-to-body approximates the observer's position as
- * Earth's model center - diurnal parallax is negligible for the Sun and
- * small (~1deg max) for the Moon, an acceptable simplification for a
- * non-ephemeris tool. `getFrame().worldPosition` remains the correct
- * extension point if a future teaching layer wants to demonstrate parallax
- * explicitly.
+ * An observer standing on Earth's surface, wired to a live, spin-affected
+ * ground-station transform (an ObserverStation's object3D) for its local
+ * horizon frame (up/north/east). `id` is a constructor param rather than a
+ * fixed literal so multiple independent observers can coexist. Direction-
+ * to-body approximates the observer's position as Earth's model center -
+ * diurnal parallax is negligible for the Sun and small (~1deg max) for the
+ * Moon, an acceptable simplification for a non-ephemeris tool, and means
+ * different observer stations currently see identical body directions
+ * (positional parallax between stations is not modeled). `getFrame().
+ * worldPosition` remains the correct extension point if a future teaching
+ * layer wants to demonstrate parallax explicitly.
  */
 export class GroundObserver implements Observer {
-  readonly id = "ground";
+  readonly id: string;
 
   private readonly groundStation: THREE.Object3D;
 
-  constructor(groundStation: THREE.Object3D) {
+  constructor(id: string, groundStation: THREE.Object3D) {
+    this.id = id;
     this.groundStation = groundStation;
   }
 
@@ -32,16 +37,7 @@ export class GroundObserver implements Observer {
     const worldPosition = this.groundStation.getWorldPosition(new THREE.Vector3());
     const worldQuaternion = this.groundStation.getWorldQuaternion(new THREE.Quaternion());
     const up = new THREE.Vector3(0, 1, 0).applyQuaternion(worldQuaternion).normalize();
-
-    // North: project the world polar axis onto the tangent plane at this
-    // point. Degenerate exactly at the poles (up parallel to the polar
-    // axis); falls back to an arbitrary tangent there rather than NaN.
-    const northCandidate = WORLD_POLAR_AXIS.clone().sub(up.clone().multiplyScalar(WORLD_POLAR_AXIS.dot(up)));
-    const north = northCandidate.lengthSq() > 1e-8 ? northCandidate.normalize() : new THREE.Vector3(1, 0, 0);
-
-    // East completes a right-handed (East, North, Up) frame: Up x North = East.
-    const east = new THREE.Vector3().crossVectors(up, north).normalize();
-
+    const { north, east } = computeNorthEast(up, WORLD_POLAR_AXIS);
     return { worldPosition, up, north, east };
   }
 

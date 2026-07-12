@@ -10,7 +10,7 @@ export class CameraManager {
   private readonly rigs: Record<CameraMode, CameraRig>;
   private mode: CameraMode;
 
-  constructor(groundStation: THREE.Object3D, domElement: HTMLElement, initialMode = CameraMode.Space) {
+  constructor(getActiveStationObject3D: () => THREE.Object3D, domElement: HTMLElement, initialMode = CameraMode.Space) {
     this.rigs = {
       [CameraMode.Space]: new OrbitCameraRig({
         domElement,
@@ -18,7 +18,7 @@ export class CameraManager {
         minDistance: EARTH_RADIUS * 1.5,
         maxDistance: EARTH_RADIUS * 40,
       }),
-      [CameraMode.Ground]: new GroundCameraRig(groundStation, domElement),
+      [CameraMode.Ground]: new GroundCameraRig(getActiveStationObject3D, domElement),
       [CameraMode.CelestialSphere]: new OrbitCameraRig({
         domElement,
         initialPosition: [CELESTIAL_GLOBE_RADIUS * 1.8, CELESTIAL_GLOBE_RADIUS * 1.2, CELESTIAL_GLOBE_RADIUS * 1.8],
@@ -35,6 +35,13 @@ export class CameraManager {
     this.rigs[this.mode].setActive(false);
     this.mode = mode;
     this.rigs[this.mode].setActive(true);
+  }
+
+  /** Suspends/restores the ACTIVE rig's own pointer interaction (e.g.
+   *  OrbitControls' drag-to-orbit) so a drag gesture can be repurposed for
+   *  observer placement instead - see ObserverPlacer. */
+  setPlacementModeActive(active: boolean): void {
+    this.rigs[this.mode].setInteractionEnabled(!active);
   }
 
   getMode(): CameraMode {
