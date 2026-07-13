@@ -7,21 +7,20 @@ export interface AstronomyModelEntry {
 }
 
 /**
- * Tracks every AstronomyModel the app can switch between and which one is
- * currently "active". Exactly one model governs the universe at a time -
- * every view (Space, Ground, Celestial Sphere, Background Stars) and every
- * observer-relative calculation reads through getActive(), never a fixed
- * model reference, so switching the active model changes what every view
- * shows simultaneously and coherently. Mirrors ObserverRegistry's exact
- * shape (add-only, first added becomes active) for consistency.
+ * The list of every AstronomyModel the app knows about. There is no notion
+ * of a single "active" model here - each registered model is permanently,
+ * independently addressable (see main.ts's per-model diagram builder), which
+ * is what lets both models' explanatory diagrams be toggled on screen at
+ * once instead of exactly one being "selected". Adding a future third model
+ * (e.g. epicycles) is a single add() call - both the diagram-building loop
+ * and the control-panel-building loop in main.ts iterate all() to pick up
+ * new entries automatically.
  */
 export class AstronomyModelRegistry {
   private readonly entries = new Map<string, AstronomyModelEntry>();
-  private activeId?: string;
 
   add(entry: AstronomyModelEntry): void {
     this.entries.set(entry.id, entry);
-    if (this.activeId === undefined) this.activeId = entry.id;
   }
 
   all(): AstronomyModelEntry[] {
@@ -30,27 +29,5 @@ export class AstronomyModelRegistry {
 
   get(id: string): AstronomyModelEntry | undefined {
     return this.entries.get(id);
-  }
-
-  getActive(): AstronomyModelEntry {
-    if (this.activeId === undefined) {
-      throw new Error("AstronomyModelRegistry.getActive: no models registered");
-    }
-    const entry = this.entries.get(this.activeId);
-    if (!entry) {
-      throw new Error(`AstronomyModelRegistry.getActive: active id "${this.activeId}" not found`);
-    }
-    return entry;
-  }
-
-  getActiveId(): string {
-    return this.getActive().id;
-  }
-
-  setActive(id: string): void {
-    if (!this.entries.has(id)) {
-      throw new Error(`AstronomyModelRegistry.setActive: unknown model id "${id}"`);
-    }
-    this.activeId = id;
   }
 }

@@ -2,31 +2,10 @@ import * as THREE from "three";
 import type { Layer, LayerGroup } from "../Layer";
 import type { Observer } from "../../observers/Observer";
 import type { ResolvedConstellation } from "../../astronomy/constellationCatalog";
+import { createLabelTexture } from "../../utils/canvasLabel";
 
 const LABEL_CANVAS_WIDTH = 256;
 const LABEL_CANVAS_HEIGHT = 64;
-const LABEL_FONT = "32px sans-serif";
-
-/** Renders `text` onto an offscreen canvas ONCE and wraps it as a
- *  CanvasTexture - the one-time cost this whole layer is built around
- *  avoiding repeating. No DOM element is ever attached to the page; the
- *  canvas exists only as a texture source. */
-function createLabelTexture(text: string, color: string): THREE.CanvasTexture {
-  const canvas = document.createElement("canvas");
-  canvas.width = LABEL_CANVAS_WIDTH;
-  canvas.height = LABEL_CANVAS_HEIGHT;
-  const ctx = canvas.getContext("2d");
-  if (ctx) {
-    ctx.font = LABEL_FONT;
-    ctx.fillStyle = color;
-    ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(text, canvas.width / 2, canvas.height / 2);
-  }
-  const texture = new THREE.CanvasTexture(canvas);
-  texture.colorSpace = THREE.SRGBColorSpace;
-  return texture;
-}
 
 interface LabelEntry {
   sprite: THREE.Sprite;

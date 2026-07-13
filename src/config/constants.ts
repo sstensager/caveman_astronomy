@@ -14,6 +14,15 @@ export const CELESTIAL_SPHERE_RADIUS = 2000;
 // see CompositeLayer / CelestialSphereShell.
 export const CELESTIAL_GLOBE_RADIUS = EARTH_RADIUS * 5;
 
+// The globe-tier alt/az grid's own dedicated radius - deliberately NOT tied
+// to CELESTIAL_GLOBE_RADIUS (unlike the Sun/Moon globe markers and the
+// wireframe shell). The grid is a personal "you are here, this is your
+// horizon" diagram, not part of the explanatory-globe scene it used to
+// share a radius with purely by reuse - at CELESTIAL_GLOBE_RADIUS scale it
+// dwarfed the planet (25 vs EARTH_RADIUS=5); this keeps it snug around the
+// observer instead.
+export const OBSERVER_GRID_RADIUS = EARTH_RADIUS * 1.1;
+
 // Background Stars and Celestial Sphere Stars are two independent systems
 // (see StarsLayer) that both read from the one shared real star catalog
 // (src/astronomy/starCatalog.ts) and only differ in these tuning defaults.
@@ -104,6 +113,11 @@ export const COLORS = {
   sun: 0xffcc55,
   moon: 0xd8dee6,
 } as const;
+
+// One color per observer, cycled by creation order (see main.ts's
+// createObserverEntry) - lets multiple observers' pins/chevrons be told
+// apart at a glance instead of every one rendering as the same red.
+export const OBSERVER_COLORS = [0xff5f5f, 0x5fb8ff, 0x8dff5f, 0xffd75f, 0xd75fff, 0x5fffe0] as const;
 
 // Celestial marker size as a fraction of whichever sphere radius it's
 // projected onto, so one ratio scales correctly for both the sky-scale and

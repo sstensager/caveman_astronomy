@@ -13,10 +13,12 @@ import { CelestialMarkerLayer } from "./layers/sky/CelestialMarkerLayer";
 import { CelestialSphereShell } from "./layers/sky/CelestialSphereShell";
 import { ConstellationLinesLayer } from "./layers/sky/ConstellationLinesLayer";
 import { ConstellationLabelsLayer } from "./layers/sky/ConstellationLabelsLayer";
+import { OrbitLineLayer } from "./layers/sky/OrbitLineLayer";
+import { SkyPathLineLayer } from "./layers/sky/SkyPathLineLayer";
 import { ModernHeliocentricModel } from "./astronomy/models/ModernHeliocentricModel";
 import { GeocentricModel } from "./astronomy/models/GeocentricModel";
 import { AstronomyModelRegistry } from "./astronomy/AstronomyModelRegistry";
-import { BodyIds } from "./astronomy/types";
+import { BodyIds, type AstronomyModel } from "./astronomy/types";
 import { STAR_CATALOG } from "./astronomy/starCatalog";
 import { RESOLVED_CONSTELLATION_CULTURES } from "./astronomy/constellationCatalog";
 import { GroundObserver } from "./observers/GroundObserver";
@@ -27,6 +29,7 @@ import { ZenithLayer } from "./observers/ZenithLayer";
 import { AltAzGridLayer } from "./observers/AltAzGridLayer";
 import { CameraManager } from "./cameras/CameraManager";
 import { CameraMode } from "./cameras/CameraMode";
+import { CameraUpMode } from "./cameras/CameraUpMode";
 import { GroundMoveControls } from "./cameras/GroundMoveControls";
 import { ControlPanel, type ControlPanelConfig, type ViewModeDef } from "./ui/ControlPanel";
 import { SCENE_PRESETS } from "./ui/scenePresets";
@@ -48,6 +51,8 @@ import {
   EARTH_RADIUS,
   DEFAULT_LONGITUDE_DEG,
   MOON_GLOBE_ORBIT_FRACTION,
+  OBSERVER_COLORS,
+  OBSERVER_GRID_RADIUS,
   STAR_LIMITING_MAGNITUDE_MAX,
   STAR_LIMITING_MAGNITUDE_MIN,
   SUN_GLOBE_ORBIT_FRACTION,
@@ -59,7 +64,13 @@ import {
   TIME_STEP_MONTH_DAYS,
   TIME_STEP_YEAR_DAYS,
 } from "./config/constants";
-import { EARTH_AXIAL_TILT_DEG } from "./astronomy/constants";
+import {
+  EARTH_AXIAL_TILT_DEG,
+  EARTH_ORBIT_PERIOD_DAYS,
+  EARTH_ORBIT_RADIUS,
+  MOON_ORBIT_PERIOD_DAYS,
+  MOON_ORBIT_RADIUS,
+} from "./astronomy/constants";
 
 const container = document.querySelector<HTMLDivElement>("#app");
 if (!container) throw new Error("#app container not found");
@@ -91,15 +102,26 @@ const simClock = new SimulationClock();
 // plain domain values become THREE.Vector3s. See src/astronomy and
 // src/observers for the full pipeline this feeds into.
 //
-// Exactly ONE AstronomyModel governs the universe at a time - every view
-// (Space, Ground, Celestial Sphere, Background Stars) and every observer-
-// relative calculation reads through modelRegistry.getActive(), never a
-// fixed model reference, so switching the active model changes what every
-// view shows simultaneously and coherently. See AstronomyModelRegistry.
+// Every registered AstronomyModel is permanently, independently addressable
+// - there is no single "active" model anymore (see AstronomyModelRegistry).
+// Each model gets its OWN explanatory-globe diagram (Sun/Moon markers +
+// orbit lines, built below by buildModelDiagram), toggled fully
+// independently, so both models' pictures can be inspected side by side.
+//
+// Ground View's sky and the day/night terminator lighting still need
+// exactly ONE model to read from (you can't stand under two skies at once)
+// - they read from `groundModel` below. Since the two models are PROVEN to
+// produce identical apparent-sky positions (see modelEquivalence.test.ts
+// and GeocentricModel's doc comment), which model that is doesn't change
+// what's observed - "heliocentric" is picked arbitrarily, fixed, not
+// user-switchable. This is the seam a future model-space rewire (Sun fixed
+// with Earth's orbit line, instead of everything staying Earth-centered)
+// will replace with something that actually depends on where you're
+// standing/traveling to.
 const modelRegistry = new AstronomyModelRegistry();
 modelRegistry.add({ id: "heliocentric", label: "Heliocentric", model: new ModernHeliocentricModel() });
 modelRegistry.add({ id: "geocentric", label: "Geocentric", model: new GeocentricModel() });
-const getActiveModel = () => modelRegistry.getActive().model;
+const groundModel = modelRegistry.get("heliocentric")!.model;
 
 // --- Layers ---------------------------------------------------------------
 // Every independently-toggleable piece of the scene registers here. Adding
@@ -124,21 +146,62 @@ const axis = new AxisLayer(earthBase.rotationGroup);
 
 // --- Observers ---------------------------------------------------------
 // Multiple observers can coexist; exactly one is "active" at a time - WASD,
-// drag-to-place, the personal zenith/alt-az grid, and every marker's
-// observerCentered offset all follow whichever one is active, via
-// getActiveObserver() below, never a fixed reference. Pins render for every
-// entry simultaneously; only the active entry's zenith/grid are shown.
+// drag-to-place, and Ground View's camera attachment all follow whichever
+// one is active, via getActiveObserver() below, never a fixed reference.
+// Pins render for every entry simultaneously; each entry's zenith/alt-az
+// grid ALSO render independently of which one is "active" - see
+// createObserverEntry, which binds each pair to that specific observer
+// (never getActiveObserver), exactly like buildModelDiagram binds each
+// model's diagram to a fixed model instead of getActiveModel.
 const observerRegistry = new ObserverRegistry();
 let observerMarkersVisible = true;
 let nextObserverNumber = 1;
 
-function createObserverEntry(id: string, label: string, latDeg: number, lonDeg: number): ObserverEntry {
+function createObserverEntry(id: string, label: string, latDeg: number, lonDeg: number, colorIndex: number): ObserverEntry {
   const station = new ObserverStation(earthBase.rotationGroup, { id, label, latDeg, lonDeg });
   const observer = new GroundObserver(id, station.object3D);
-  const marker = new ObserverMarker(id, label, () => observer.getFrame().worldPosition);
+  const color = OBSERVER_COLORS[colorIndex % OBSERVER_COLORS.length];
+  const marker = new ObserverMarker(id, label, () => observer.getFrame().worldPosition, { color });
   marker.setVisible(observerMarkersVisible);
   scene.add(marker.object3D);
-  return { id, label, station, observer, marker };
+
+  const zenithSky = new ZenithLayer({
+    id: `${id}ZenithSky`,
+    label: `${label} Zenith (sky)`,
+    radius: CELESTIAL_SPHERE_RADIUS,
+    getActiveObserver: () => observer,
+  });
+  const zenithGlobe = new ZenithLayer({
+    id: `${id}ZenithGlobe`,
+    label: `${label} Zenith (globe)`,
+    radius: CELESTIAL_GLOBE_RADIUS,
+    getActiveObserver: () => observer,
+  });
+  const altAzGridSky = new AltAzGridLayer({
+    id: `${id}AltAzGridSky`,
+    label: `${label} Alt/Az Grid (sky)`,
+    radius: CELESTIAL_SPHERE_RADIUS,
+    getActiveObserver: () => observer,
+  });
+  const altAzGridGlobe = new AltAzGridLayer({
+    id: `${id}AltAzGridGlobe`,
+    label: `${label} Alt/Az Grid (globe)`,
+    radius: OBSERVER_GRID_RADIUS,
+    getActiveObserver: () => observer,
+  });
+  const zenith = new CompositeLayer(`${id}Zenith`, `${label} Zenith`, "Sky.Interpretation", [zenithSky, zenithGlobe]);
+  const altAzGrid = new CompositeLayer(`${id}AltAzGrid`, `${label} Alt/Az Grid`, "Sky.Interpretation", [altAzGridSky, altAzGridGlobe]);
+
+  layers.register(zenith);
+  layers.register(zenithSky);
+  layers.register(zenithGlobe);
+  layers.register(altAzGrid);
+  layers.register(altAzGridSky);
+  layers.register(altAzGridGlobe);
+  scene.add(zenithSky.object3D, zenithGlobe.object3D, altAzGridSky.object3D, altAzGridGlobe.object3D);
+  layers.show({ [zenith.id]: false, [altAzGrid.id]: false });
+
+  return { id, label, station, observer, marker, zenithSky, zenithGlobe, zenith, altAzGridSky, altAzGridGlobe, altAzGrid };
 }
 
 const defaultObserverEntry = createObserverEntry(
@@ -146,6 +209,7 @@ const defaultObserverEntry = createObserverEntry(
   `Observer ${nextObserverNumber}`,
   DEFAULT_LATITUDE_DEG,
   DEFAULT_LONGITUDE_DEG,
+  0,
 );
 observerRegistry.add(defaultObserverEntry);
 nextObserverNumber += 1;
@@ -180,6 +244,11 @@ const celestialSphereStars = new StarsLayer({
 // never destroys this, and turning this off never touches stars.
 const ALL_CONSTELLATIONS = RESOLVED_CONSTELLATION_CULTURES.flatMap((culture) => culture.constellations);
 
+// Sky-tier and globe-tier each get their own independent checkbox (no
+// fusing CompositeLayer, unlike Sun/Moon) - unlike a body marker, "show
+// constellations in the immersive sky" and "show constellations on the
+// small explanatory globe" are genuinely separate teaching choices someone
+// may want on one at a time, not one concept rendered at two scales.
 const constellationLinesSky = new ConstellationLinesLayer({
   id: "constellationLinesSky",
   label: "Constellation Lines (sky)",
@@ -195,10 +264,6 @@ const constellationLinesGlobe = new ConstellationLinesLayer({
   radius: CELESTIAL_GLOBE_RADIUS,
   constellations: ALL_CONSTELLATIONS,
 });
-const constellationLines = new CompositeLayer("constellationLines", "Show Constellation Lines", "Sky.Observation", [
-  constellationLinesSky,
-  constellationLinesGlobe,
-]);
 
 const constellationNamesSky = new ConstellationLabelsLayer({
   id: "constellationNamesSky",
@@ -215,35 +280,23 @@ const constellationNamesGlobe = new ConstellationLabelsLayer({
   radius: CELESTIAL_GLOBE_RADIUS,
   constellations: ALL_CONSTELLATIONS,
 });
-const constellationNames = new CompositeLayer("constellationNames", "Show Constellation Names", "Sky.Observation", [
-  constellationNamesSky,
-  constellationNamesGlobe,
-]);
 
-// All four markers below share the SAME getActiveModel/getActiveObserver
-// getters - confirming they're all just different VIEWS (sky vs globe
-// display radius) of the one active model, not tied to different models.
-// observerCentered stays differentiated per tier exactly as before this
-// correction: sky-scale markers are observer-centered (parallax-correct
-// from the actual observer position); globe-scale markers stay Earth-
-// centered (the globe is a static external diagram - see CelestialSphereShell).
-const sunMarkerSky = new CelestialMarkerLayer(BodyIds.Sun, getActiveModel, getActiveObserver, getSimulationTime, {
+// The always-on immersive sky markers - single, shared, NOT tied to any
+// particular model's explanatory diagram (see buildModelDiagram below).
+// Driven by the fixed groundModel, exactly like Ground View's lighting -
+// this is "what's actually in today's sky", not "model 1's diagram" or
+// "model 2's diagram". observerCentered: true makes these parallax-correct
+// from the actual observer position, unlike the globe-tier diagrams below,
+// which stay Earth-centered (each is a static external diagram - see
+// CelestialSphereShell).
+const sunMarkerSky = new CelestialMarkerLayer(BodyIds.Sun, () => groundModel, getActiveObserver, getSimulationTime, {
   id: "sunMarkerSky",
   label: "Sun (sky)",
   color: COLORS.sun,
   radius: CELESTIAL_SPHERE_RADIUS,
   observerCentered: true,
 });
-const sunMarkerGlobe = new CelestialMarkerLayer(BodyIds.Sun, getActiveModel, getActiveObserver, getSimulationTime, {
-  id: "sunMarkerGlobe",
-  label: "Sun (globe)",
-  color: COLORS.sun,
-  radius: CELESTIAL_GLOBE_RADIUS,
-  orbitRadiusFraction: SUN_GLOBE_ORBIT_FRACTION,
-});
-const sunMarker = new CompositeLayer("sunMarker", "Show Sun", "Sky.Observation", [sunMarkerSky, sunMarkerGlobe]);
-
-const moonMarkerSky = new CelestialMarkerLayer(BodyIds.Moon, getActiveModel, getActiveObserver, getSimulationTime, {
+const moonMarkerSky = new CelestialMarkerLayer(BodyIds.Moon, () => groundModel, getActiveObserver, getSimulationTime, {
   id: "moonMarkerSky",
   label: "Moon (sky)",
   color: COLORS.moon,
@@ -252,51 +305,107 @@ const moonMarkerSky = new CelestialMarkerLayer(BodyIds.Moon, getActiveModel, get
   textureUrl: "/textures/moon1.png",
   spinMode: "tidalLocked",
 });
-const moonMarkerGlobe = new CelestialMarkerLayer(BodyIds.Moon, getActiveModel, getActiveObserver, getSimulationTime, {
-  id: "moonMarkerGlobe",
-  label: "Moon (globe)",
-  color: COLORS.moon,
-  radius: CELESTIAL_GLOBE_RADIUS,
-  orbitRadiusFraction: MOON_GLOBE_ORBIT_FRACTION,
-  textureUrl: "/textures/moon1.png",
-  spinMode: "tidalLocked",
+
+// The path each body traces across the immersive sky over one full orbital
+// period (the Sun's is literally the ecliptic) - see SkyPathLineLayer's doc
+// comment for why this is direction-only (no real eccentricity, unlike
+// OrbitLineLayer's globe-tier ellipses) and why it's driven by the same
+// fixed groundModel as the sky markers above, not duplicated per model.
+const sunEclipticPath = new SkyPathLineLayer({
+  id: "sunEclipticPath",
+  label: "Sun Ecliptic Path",
+  group: "Sky.Observation",
+  bodyId: BodyIds.Sun,
+  relativeToId: BodyIds.Earth,
+  periodDays: EARTH_ORBIT_PERIOD_DAYS,
+  getModel: () => groundModel,
+  getObserver: getActiveObserver,
+  getSimulationTime,
+  radius: CELESTIAL_SPHERE_RADIUS,
+  color: COLORS.sun,
 });
-const moonMarker = new CompositeLayer("moonMarker", "Show Moon", "Sky.Observation", [moonMarkerSky, moonMarkerGlobe]);
+const moonSkyPath = new SkyPathLineLayer({
+  id: "moonSkyPath",
+  label: "Moon Sky Path",
+  group: "Sky.Observation",
+  bodyId: BodyIds.Moon,
+  relativeToId: BodyIds.Earth,
+  periodDays: MOON_ORBIT_PERIOD_DAYS,
+  getModel: () => groundModel,
+  getObserver: getActiveObserver,
+  getSimulationTime,
+  radius: CELESTIAL_SPHERE_RADIUS,
+  color: COLORS.moon,
+});
 
 const celestialSphereShell = new CelestialSphereShell(CELESTIAL_GLOBE_RADIUS);
 
-// Personal zenith (point + line) and alt/az grid: dual-tier like Sun/Moon,
-// but unconditionally observer-centered on BOTH tiers (no observerCentered
-// option) - altitude/azimuth/zenith have no Earth-center equivalent to
-// fall back to, unlike Sun/Moon's negligible-parallax approximation. Both
-// always follow whichever observer is currently active.
-const zenithSky = new ZenithLayer({
-  id: "zenithSky",
-  label: "Zenith (sky)",
-  radius: CELESTIAL_SPHERE_RADIUS,
-  getActiveObserver,
-});
-const zenithGlobe = new ZenithLayer({
-  id: "zenithGlobe",
-  label: "Zenith (globe)",
-  radius: CELESTIAL_GLOBE_RADIUS,
-  getActiveObserver,
-});
-const zenith = new CompositeLayer("zenith", "Show Zenith", "Sky.Interpretation", [zenithSky, zenithGlobe]);
+/**
+ * One model's full explanatory-globe diagram: its Sun/Moon markers (real
+ * apparent position, Earth-centered) and its real elliptical orbit lines
+ * (true eccentricity - see OrbitLineLayer's doc comment). Bound to a FIXED
+ * model instance (never a lazily-resolved "active" one), so every model's
+ * diagram is permanently, independently toggleable - multiple can be shown
+ * at once to compare them directly, which is the whole point of having two
+ * models in the first place. orbitRadiusFraction matches between a body's
+ * marker and its line so they read as one diagram, exactly as before.
+ */
+function buildModelDiagram(modelId: string, modelLabel: string, model: AstronomyModel) {
+  const sunMarkerGlobe = new CelestialMarkerLayer(BodyIds.Sun, () => model, getActiveObserver, getSimulationTime, {
+    id: `${modelId}SunMarkerGlobe`,
+    label: `${modelLabel} Sun`,
+    color: COLORS.sun,
+    radius: CELESTIAL_GLOBE_RADIUS,
+    orbitRadiusFraction: SUN_GLOBE_ORBIT_FRACTION,
+  });
+  const moonMarkerGlobe = new CelestialMarkerLayer(BodyIds.Moon, () => model, getActiveObserver, getSimulationTime, {
+    id: `${modelId}MoonMarkerGlobe`,
+    label: `${modelLabel} Moon`,
+    color: COLORS.moon,
+    radius: CELESTIAL_GLOBE_RADIUS,
+    orbitRadiusFraction: MOON_GLOBE_ORBIT_FRACTION,
+    textureUrl: "/textures/moon1.png",
+    spinMode: "tidalLocked",
+  });
+  const sunOrbitLine = new OrbitLineLayer({
+    id: `${modelId}SunOrbitLine`,
+    label: `${modelLabel} Sun Orbit`,
+    group: "Sky.Geometry",
+    bodyId: BodyIds.Sun,
+    relativeToId: BodyIds.Earth,
+    periodDays: EARTH_ORBIT_PERIOD_DAYS,
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: () => model,
+    getSimulationTime,
+    radius: CELESTIAL_GLOBE_RADIUS,
+    orbitRadiusFraction: SUN_GLOBE_ORBIT_FRACTION,
+    color: COLORS.sun,
+  });
+  const moonOrbitLine = new OrbitLineLayer({
+    id: `${modelId}MoonOrbitLine`,
+    label: `${modelLabel} Moon Orbit`,
+    group: "Sky.Geometry",
+    bodyId: BodyIds.Moon,
+    relativeToId: BodyIds.Earth,
+    periodDays: MOON_ORBIT_PERIOD_DAYS,
+    semiMajorAxis: MOON_ORBIT_RADIUS,
+    getModel: () => model,
+    getSimulationTime,
+    radius: CELESTIAL_GLOBE_RADIUS,
+    orbitRadiusFraction: MOON_GLOBE_ORBIT_FRACTION,
+    color: COLORS.moon,
+  });
+  // Fuses this model's two orbit lines under one id/checkbox - "Show Orbital
+  // Lines" is one teaching choice per model, not two, exactly like the
+  // original shared orbitLines composite before this became per-model.
+  const orbitLines = new CompositeLayer(`${modelId}OrbitLines`, `${modelLabel} Orbit Lines`, "Sky.Geometry", [
+    sunOrbitLine,
+    moonOrbitLine,
+  ]);
+  return { modelId, modelLabel, sunMarkerGlobe, moonMarkerGlobe, sunOrbitLine, moonOrbitLine, orbitLines };
+}
 
-const altAzGridSky = new AltAzGridLayer({
-  id: "altAzGridSky",
-  label: "Alt/Az Grid (sky)",
-  radius: CELESTIAL_SPHERE_RADIUS,
-  getActiveObserver,
-});
-const altAzGridGlobe = new AltAzGridLayer({
-  id: "altAzGridGlobe",
-  label: "Alt/Az Grid (globe)",
-  radius: CELESTIAL_GLOBE_RADIUS,
-  getActiveObserver,
-});
-const altAzGrid = new CompositeLayer("altAzGrid", "Show Alt/Az Grid", "Sky.Interpretation", [altAzGridSky, altAzGridGlobe]);
+const modelDiagrams = modelRegistry.all().map((entry) => buildModelDiagram(entry.id, entry.label, entry.model));
 
 // Synthetic Layer (no object3D of its own - see Layer.object3D being
 // optional) fanning "Show Observer Markers" out to every registered
@@ -319,35 +428,34 @@ layers.register(continents);
 layers.register(axis);
 layers.register(backgroundStars);
 layers.register(celestialSphereStars);
-layers.register(constellationLines);
 layers.register(constellationLinesSky);
 layers.register(constellationLinesGlobe);
-layers.register(constellationNames);
 layers.register(constellationNamesSky);
 layers.register(constellationNamesGlobe);
-layers.register(sunMarker);
 layers.register(sunMarkerSky);
-layers.register(sunMarkerGlobe);
-layers.register(moonMarker);
 layers.register(moonMarkerSky);
-layers.register(moonMarkerGlobe);
+layers.register(sunEclipticPath);
+layers.register(moonSkyPath);
+for (const diagram of modelDiagrams) {
+  layers.register(diagram.sunMarkerGlobe);
+  layers.register(diagram.moonMarkerGlobe);
+  layers.register(diagram.orbitLines);
+  layers.register(diagram.sunOrbitLine);
+  layers.register(diagram.moonOrbitLine);
+}
 layers.register(celestialSphereShell);
-layers.register(zenith);
-layers.register(zenithSky);
-layers.register(zenithGlobe);
-layers.register(altAzGrid);
-layers.register(altAzGridSky);
-layers.register(altAzGridGlobe);
 layers.register(observerMarkersLayer);
 
 scene.add(earthBase.object3D);
 scene.add(backgroundStars.object3D, celestialSphereStars.object3D);
 scene.add(constellationLinesSky.object3D, constellationLinesGlobe.object3D);
 scene.add(constellationNamesSky.object3D, constellationNamesGlobe.object3D);
-scene.add(zenithSky.object3D, zenithGlobe.object3D);
-scene.add(altAzGridSky.object3D, altAzGridGlobe.object3D);
-scene.add(sunMarkerSky.object3D, sunMarkerGlobe.object3D);
-scene.add(moonMarkerSky.object3D, moonMarkerGlobe.object3D);
+scene.add(sunMarkerSky.object3D, moonMarkerSky.object3D);
+scene.add(sunEclipticPath.object3D, moonSkyPath.object3D);
+for (const diagram of modelDiagrams) {
+  scene.add(diagram.sunMarkerGlobe.object3D, diagram.moonMarkerGlobe.object3D);
+  scene.add(diagram.sunOrbitLine.object3D, diagram.moonOrbitLine.object3D);
+}
 scene.add(celestialSphereShell.object3D);
 
 const selectedStarMarker = new SelectedStarMarker();
@@ -364,21 +472,32 @@ const defaultLayerVisibility: Record<string, boolean> = {
   constellationNamesSky: false,
   constellationNamesGlobe: false,
   sunMarkerSky: true,
-  sunMarkerGlobe: false,
   moonMarkerSky: true,
-  moonMarkerGlobe: false,
+  sunEclipticPath: false,
+  moonSkyPath: false,
   celestialSphereShell: false,
-  zenithSky: false,
-  zenithGlobe: false,
-  altAzGridSky: false,
-  altAzGridGlobe: false,
   observerMarkers: true,
 };
+// Both models' diagrams start fully off - neither is "primary" (see
+// AstronomyModelRegistry's doc comment), so nobody's marker/orbit-line
+// defaults get silently favored over the other's.
+for (const diagram of modelDiagrams) {
+  defaultLayerVisibility[diagram.sunMarkerGlobe.id] = false;
+  defaultLayerVisibility[diagram.moonMarkerGlobe.id] = false;
+  defaultLayerVisibility[diagram.orbitLines.id] = false;
+}
 layers.show(defaultLayerVisibility);
 
 // --- Cameras --------------------------------------------------------------
 
 const cameraManager = new CameraManager(() => observerRegistry.getActive().station.object3D, renderer.domElement);
+
+// Wired in here (not at construction) since CameraManager doesn't exist yet
+// when the default observer's marker is created above - see
+// ObserverMarker.setCameraPositionGetter's doc comment. addObserver() below
+// wires this into every subsequently-created marker too.
+const getCameraPosition = () => cameraManager.getActiveCamera().position;
+defaultObserverEntry.marker.setCameraPositionGetter(getCameraPosition);
 
 // The globe-scale ("explanatory globe") tier (Sun/Moon globe markers, the
 // wireframe shell, and its own star field) is Earth-centered - see
@@ -413,10 +532,17 @@ const onCelestialSphereRadiusChange = (radius: number): void => {
   celestialSphereStars.setRadius(radius);
   constellationLinesGlobe.setRadius(radius);
   constellationNamesGlobe.setRadius(radius);
-  sunMarkerGlobe.setRadius(radius);
-  moonMarkerGlobe.setRadius(radius);
-  zenithGlobe.setRadius(radius);
-  altAzGridGlobe.setRadius(radius);
+  for (const diagram of modelDiagrams) {
+    diagram.sunMarkerGlobe.setRadius(radius);
+    diagram.moonMarkerGlobe.setRadius(radius);
+    diagram.sunOrbitLine.setRadius(radius);
+    diagram.moonOrbitLine.setRadius(radius);
+  }
+  // altAzGridGlobe deliberately excluded - see OBSERVER_GRID_RADIUS's own
+  // doc comment, it has its own independent scale.
+  for (const entry of observerRegistry.all()) {
+    entry.zenithGlobe.setRadius(radius);
+  }
 };
 
 // --- Observer movement ------------------------------------------------
@@ -462,15 +588,27 @@ function addObserver(): void {
   const id = `observer-${number}`;
   const label = `Observer ${number}`;
   const lonDeg = DEFAULT_LONGITUDE_DEG + 30 * observerRegistry.all().length;
-  const entry = createObserverEntry(id, label, DEFAULT_LATITUDE_DEG, lonDeg);
+  const entry = createObserverEntry(id, label, DEFAULT_LATITUDE_DEG, lonDeg, number - 1);
+  entry.marker.setCameraPositionGetter(getCameraPosition);
   observerRegistry.add(entry);
   controlPanel.addObserverButton({ id, label });
+  controlPanel.addObserverToggleRow({
+    id,
+    label,
+    zenith: { checked: false, onChange: (v) => layers.show({ [entry.zenith.id]: v }) },
+    grid: { checked: false, onChange: (v) => layers.show({ [entry.altAzGrid.id]: v }) },
+  });
 }
 
 function switchCameraMode(mode: CameraMode): void {
   cameraManager.setMode(mode);
   controlPanel.setActiveCameraMode(mode);
   groundMoveControls.setActive(mode === CameraMode.Ground);
+}
+
+function switchCameraUpMode(mode: CameraUpMode): void {
+  cameraManager.setSpaceUpMode(mode);
+  controlPanel.setActiveUpMode(mode);
 }
 
 const panelConfig: ControlPanelConfig = {
@@ -484,16 +622,7 @@ const panelConfig: ControlPanelConfig = {
           cameraManager.setMode(preset.cameraMode);
           controlPanel.setActiveCameraMode(preset.cameraMode);
         }
-        // layers.show() doesn't reach the fused sunMarker/moonMarker
-        // checkbox ids (Sun/Moon visibility is tracked per-tier under
-        // sunMarkerSky/sunMarkerGlobe, but the UI shows one combined
-        // checkbox) - sync those explicitly so the panel reflects what the
-        // preset actually turned on.
-        controlPanel.syncLayerToggles({
-          ...preset.layers,
-          sunMarker: preset.layers.sunMarkerSky ?? preset.layers.sunMarker ?? false,
-          moonMarker: preset.layers.moonMarkerSky ?? preset.layers.moonMarker ?? false,
-        });
+        controlPanel.syncLayerToggles(preset.layers);
       },
     })),
   },
@@ -512,12 +641,13 @@ const panelConfig: ControlPanelConfig = {
     },
   },
   astronomyModel: {
-    entries: modelRegistry.all().map((entry) => ({ id: entry.id, label: entry.label })),
-    activeId: modelRegistry.getActiveId(),
-    onSwitchActive: (id) => {
-      modelRegistry.setActive(id);
-      controlPanel.setActiveAstronomyModel(id);
-    },
+    models: modelDiagrams.map((diagram) => ({
+      id: diagram.modelId,
+      label: diagram.modelLabel,
+      sun: { checked: false, onChange: (v: boolean) => layers.show({ [diagram.sunMarkerGlobe.id]: v }) },
+      moon: { checked: false, onChange: (v: boolean) => layers.show({ [diagram.moonMarkerGlobe.id]: v }) },
+      orbitLines: { checked: false, onChange: (v: boolean) => layers.show({ [diagram.orbitLines.id]: v }) },
+    })),
   },
   observer: {
     entries: observerRegistry.all().map((entry) => ({ id: entry.id, label: entry.label })),
@@ -528,19 +658,27 @@ const panelConfig: ControlPanelConfig = {
     },
     onAddObserver: addObserver,
     markersVisible: { checked: observerMarkersVisible, onChange: (v) => layers.show({ observerMarkers: v }) },
+    // One row per observer, independently toggleable regardless of which is
+    // "active" - see ObserverRegistry's doc comment and createObserverEntry.
     // Unlike Sun/Moon's globe-tier markers, Zenith/AltAzGrid are always
     // observer-centered (see ZenithLayer/AltAzGridLayer) - the globe-tier
-    // instance is centered on wherever the observer/camera actually is, so
+    // instance is centered on wherever that observer actually is, so
     // there's no off-center parallax distortion to guard against by
     // restricting it to the external Celestial Sphere camera. Both tiers
     // toggle freely in any camera mode, letting the small globe-scale grid
     // be superimposed over Ground/Space View too.
-    zenith: { checked: false, onChange: (v) => layers.show({ zenithSky: v, zenithGlobe: v }) },
-    grid: { checked: false, onChange: (v) => layers.show({ altAzGridSky: v, altAzGridGlobe: v }) },
+    observerToggles: observerRegistry.all().map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      zenith: { checked: false, onChange: (v: boolean) => layers.show({ [entry.zenith.id]: v }) },
+      grid: { checked: false, onChange: (v: boolean) => layers.show({ [entry.altAzGrid.id]: v }) },
+    })),
   },
   sunMoon: {
-    sun: { checked: true, onChange: (v) => layers.show({ sunMarker: v }) },
-    moon: { checked: true, onChange: (v) => layers.show({ moonMarker: v }) },
+    sun: { checked: true, onChange: (v) => layers.show({ sunMarkerSky: v }) },
+    moon: { checked: true, onChange: (v) => layers.show({ moonMarkerSky: v }) },
+    sunEclipticPath: { checked: false, onChange: (v) => layers.show({ sunEclipticPath: v }) },
+    moonSkyPath: { checked: false, onChange: (v) => layers.show({ moonSkyPath: v }) },
   },
   celestialSphere: {
     visible: { checked: false, onChange: (v) => layers.show({ celestialSphereShell: v }) },
@@ -619,12 +757,22 @@ const panelConfig: ControlPanelConfig = {
     },
   },
   constellations: {
-    lines: { checked: false, onChange: (v) => layers.show({ constellationLines: v }) },
-    names: { checked: false, onChange: (v) => layers.show({ constellationNames: v }) },
+    linesSky: { checked: false, onChange: (v) => layers.show({ constellationLinesSky: v }) },
+    linesGlobe: { checked: false, onChange: (v) => layers.show({ constellationLinesGlobe: v }) },
+    namesSky: { checked: false, onChange: (v) => layers.show({ constellationNamesSky: v }) },
+    namesGlobe: { checked: false, onChange: (v) => layers.show({ constellationNamesGlobe: v }) },
   },
   camera: {
     viewModes,
     onCameraModeChange: switchCameraMode,
+    upMode: {
+      entries: [
+        { id: CameraUpMode.Equatorial, label: "North Up" },
+        { id: CameraUpMode.Ecliptic, label: "Ecliptic Up" },
+      ],
+      activeId: CameraUpMode.Equatorial,
+      onSwitchActive: switchCameraUpMode,
+    },
   },
   time: {
     onPlayPauseChange: (paused) => (simClock.paused = paused),
@@ -677,17 +825,17 @@ renderer.setAnimationLoop(() => {
   groundMoveControls.update(deltaSeconds);
   cameraManager.update();
 
-  // Real day/night terminator: the key light always comes from the active
-  // model's actual current Sun direction. Earth's mesh sits at the world
-  // origin regardless of model (see EarthBase), but the model's own
-  // coordinate origin does NOT always coincide with Earth - Heliocentric
-  // puts the Sun near origin and moves Earth, Geocentric does the
-  // opposite - so this must use the RELATIVE vector (Sun - Earth), exactly
-  // like GroundObserver.getDirectionTo, not either absolute position
-  // alone. DirectionalLight only cares about direction, not distance, but
-  // a position far outside Earth keeps the math the same shape as a real
-  // light source.
-  const universeState = getActiveModel().getState(getSimulationTime());
+  // Real day/night terminator: the key light always comes from groundModel's
+  // actual current Sun direction (see groundModel's own doc comment above -
+  // fixed, not switchable). Earth's mesh sits at the world origin regardless
+  // of model (see EarthBase), but the model's own coordinate origin does NOT
+  // always coincide with Earth - Heliocentric puts the Sun near origin and
+  // moves Earth, Geocentric does the opposite - so this must use the
+  // RELATIVE vector (Sun - Earth), exactly like GroundObserver.
+  // getDirectionTo, not either absolute position alone. DirectionalLight
+  // only cares about direction, not distance, but a position far outside
+  // Earth keeps the math the same shape as a real light source.
+  const universeState = groundModel.getState(getSimulationTime());
   const sunBody = universeState.bodies[BodyIds.Sun];
   const earthBody = universeState.bodies[BodyIds.Earth];
   sunLightDirection

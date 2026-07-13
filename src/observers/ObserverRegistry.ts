@@ -1,6 +1,9 @@
 import type { ObserverStation } from "./ObserverStation";
 import type { GroundObserver } from "./GroundObserver";
 import type { ObserverMarker } from "./ObserverMarker";
+import type { ZenithLayer } from "./ZenithLayer";
+import type { AltAzGridLayer } from "./AltAzGridLayer";
+import type { CompositeLayer } from "../layers/CompositeLayer";
 
 export interface ObserverEntry {
   readonly id: string;
@@ -8,15 +11,26 @@ export interface ObserverEntry {
   readonly station: ObserverStation;
   readonly observer: GroundObserver;
   readonly marker: ObserverMarker;
+  /** Each entry's own zenith/grid, bound to THIS entry's observer (never
+   *  "whichever is active") - independently toggleable per observer, see
+   *  main.ts's createObserverEntry. zenith/altAzGrid are the fused
+   *  sky+globe composite (one checkbox); the *Sky/*Globe tiers are kept
+   *  individually too for setRadius calls (see onCelestialSphereRadiusChange). */
+  readonly zenithSky: ZenithLayer;
+  readonly zenithGlobe: ZenithLayer;
+  readonly zenith: CompositeLayer;
+  readonly altAzGridSky: AltAzGridLayer;
+  readonly altAzGridGlobe: AltAzGridLayer;
+  readonly altAzGrid: CompositeLayer;
 }
 
 /**
  * Tracks every observer entity in the scene and which one is currently
- * "active" (the one WASD/drag-to-place/personal-zenith/alt-az-grid follow).
- * Add-only for v1 - no remove. Pins render for every entry simultaneously
- * (you need to see where an observer is to switch to them); the personal
- * zenith/alt-az grid, by contrast, follow only the active entry - see
- * main.ts wiring.
+ * "active" (the one WASD/drag-to-place follow, and which camera Ground View
+ * attaches to). Add-only for v1 - no remove. Pins render for every entry
+ * simultaneously (you need to see where an observer is to switch to them);
+ * zenith/alt-az grid ALSO render per-entry, independently toggleable
+ * regardless of which entry is "active" - see main.ts wiring.
  */
 export class ObserverRegistry {
   private readonly entries = new Map<string, ObserverEntry>();

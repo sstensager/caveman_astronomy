@@ -3,6 +3,7 @@ import { CameraMode } from "./CameraMode";
 import type { CameraRig } from "./CameraRig";
 import { OrbitCameraRig } from "./OrbitCameraRig";
 import { GroundCameraRig } from "./GroundCameraRig";
+import type { CameraUpMode } from "./CameraUpMode";
 import { EARTH_RADIUS } from "../config/constants";
 
 /** Owns all camera rigs and switches which one is active/rendered. Space is
@@ -14,20 +15,34 @@ import { EARTH_RADIUS } from "../config/constants";
  *  visibility by which "mode" you're in. */
 export class CameraManager {
   private readonly rigs: Record<CameraMode, CameraRig>;
+  // Typed separately from `rigs` (rather than cast/instanceof at each call
+  // site) since "up mode" is a capability only the free-roam Space rig has -
+  // Ground's camera is locked to the observer's real local zenith instead.
+  private readonly spaceRig: OrbitCameraRig;
   private mode: CameraMode;
 
   constructor(getActiveStationObject3D: () => THREE.Object3D, domElement: HTMLElement, initialMode = CameraMode.Space) {
+    this.spaceRig = new OrbitCameraRig({
+      domElement,
+      initialPosition: [EARTH_RADIUS * 3, EARTH_RADIUS * 2, EARTH_RADIUS * 3],
+      minDistance: EARTH_RADIUS * 1.5,
+      maxDistance: EARTH_RADIUS * 40,
+    });
     this.rigs = {
-      [CameraMode.Space]: new OrbitCameraRig({
-        domElement,
-        initialPosition: [EARTH_RADIUS * 3, EARTH_RADIUS * 2, EARTH_RADIUS * 3],
-        minDistance: EARTH_RADIUS * 1.5,
-        maxDistance: EARTH_RADIUS * 40,
-      }),
+      [CameraMode.Space]: this.spaceRig,
       [CameraMode.Ground]: new GroundCameraRig(getActiveStationObject3D, domElement),
     };
     this.mode = initialMode;
     this.rigs[this.mode].setActive(true);
+  }
+
+  /** Only meaningful in Space View - see the class doc comment on spaceRig. */
+  setSpaceUpMode(mode: CameraUpMode): void {
+    this.spaceRig.setUpMode(mode);
+  }
+
+  getSpaceUpMode(): CameraUpMode {
+    return this.spaceRig.getUpMode();
   }
 
   setMode(mode: CameraMode): void {

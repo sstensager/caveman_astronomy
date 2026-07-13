@@ -2,6 +2,22 @@ import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { GroundObserver } from "./GroundObserver";
 import { BodyIds, type BodyId, type UniverseState } from "../astronomy/types";
+import { EARTH_AXIAL_TILT_DEG } from "../astronomy/constants";
+
+const OBLIQUITY_RAD = THREE.MathUtils.degToRad(EARTH_AXIAL_TILT_DEG);
+
+/** Inverse of frames.ts's eclipticToWorld (a pure rotation, so its inverse
+ *  is its transpose) - lets the hand-computed tests below place a body at a
+ *  known WORLD-space direction (e.g. this observer's own up/north) by first
+ *  expressing it back in the model's ecliptic frame, exactly undoing what
+ *  GroundObserver.getDirectionTo now applies. */
+function worldToEcliptic(v: THREE.Vector3): THREE.Vector3 {
+  return new THREE.Vector3(
+    v.x * Math.cos(OBLIQUITY_RAD) - v.y * Math.sin(OBLIQUITY_RAD),
+    v.x * Math.sin(OBLIQUITY_RAD) + v.y * Math.cos(OBLIQUITY_RAD),
+    v.z,
+  );
+}
 
 /** A groundStation-shaped fixture at the equator, longitude 0 - same
  *  construction EarthBase.createGroundStation uses, but with explicit,
@@ -84,8 +100,10 @@ describe("GroundObserver.getDirectionTo", () => {
   it("hand-computed: Sun directly overhead reads as zenith (direction parallel to local up)", () => {
     const observer = new GroundObserver("ground", equatorStationFixture());
     const frame = observer.getFrame();
-    // Put the Sun far along this observer's own "up" direction.
-    const sunPosition = frame.up.clone().multiplyScalar(1000);
+    // Put the Sun (in ECLIPTIC-frame model coordinates, what getDirectionTo
+    // actually consumes) at whatever position rotates - via eclipticToWorld
+    // - onto this observer's own "up" direction.
+    const sunPosition = worldToEcliptic(frame.up).multiplyScalar(1000);
     const state = stateWithBodyAt(BodyIds.Sun, sunPosition);
     const direction = observer.getDirectionTo(BodyIds.Sun, state);
     expect(direction.dot(frame.up)).toBeCloseTo(1, 5);
@@ -94,9 +112,10 @@ describe("GroundObserver.getDirectionTo", () => {
   it("hand-computed: Sun on the horizon reads as perpendicular to local up", () => {
     const observer = new GroundObserver("ground", equatorStationFixture());
     const frame = observer.getFrame();
-    // Put the Sun far along this observer's "north" direction - tangent to
+    // Put the Sun (in ecliptic-frame model coordinates) at whatever
+    // position rotates onto this observer's "north" direction - tangent to
     // the sphere, i.e. exactly on the horizon.
-    const sunPosition = frame.north!.clone().multiplyScalar(1000);
+    const sunPosition = worldToEcliptic(frame.north!).multiplyScalar(1000);
     const state = stateWithBodyAt(BodyIds.Sun, sunPosition);
     const direction = observer.getDirectionTo(BodyIds.Sun, state);
     expect(direction.dot(frame.up)).toBeCloseTo(0, 5);

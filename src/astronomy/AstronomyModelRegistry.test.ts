@@ -22,30 +22,27 @@ function stubModel(id: string): AstronomyModel {
 }
 
 describe("AstronomyModelRegistry", () => {
-  it("makes the first added model active by default", () => {
+  it("returns every registered model from all()", () => {
     const registry = new AstronomyModelRegistry();
     registry.add({ id: "a", label: "A", model: stubModel("a") });
     registry.add({ id: "b", label: "B", model: stubModel("b") });
-    expect(registry.getActiveId()).toBe("a");
+    expect(registry.all().map((entry) => entry.id)).toEqual(["a", "b"]);
   });
 
-  it("switches active model via setActive", () => {
+  it("looks up a registered model by id via get()", () => {
     const registry = new AstronomyModelRegistry();
     registry.add({ id: "a", label: "A", model: stubModel("a") });
-    registry.add({ id: "b", label: "B", model: stubModel("b") });
-    registry.setActive("b");
-    expect(registry.getActiveId()).toBe("b");
-    expect(registry.getActive().model.id).toBe("b");
+    expect(registry.get("a")?.model.id).toBe("a");
   });
 
-  it("throws when getting active with nothing registered", () => {
-    const registry = new AstronomyModelRegistry();
-    expect(() => registry.getActive()).toThrow();
-  });
-
-  it("throws when setting an unknown active id", () => {
+  it("returns undefined from get() for an unknown id", () => {
     const registry = new AstronomyModelRegistry();
     registry.add({ id: "a", label: "A", model: stubModel("a") });
-    expect(() => registry.setActive("nonexistent")).toThrow();
+    expect(registry.get("nonexistent")).toBeUndefined();
+  });
+
+  it("starts with an empty list", () => {
+    const registry = new AstronomyModelRegistry();
+    expect(registry.all()).toEqual([]);
   });
 });

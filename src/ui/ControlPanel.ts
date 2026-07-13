@@ -1,4 +1,5 @@
 import { CameraMode } from "../cameras/CameraMode";
+import { CameraUpMode } from "../cameras/CameraUpMode";
 import type { HemisphereMode } from "../utils/hemisphereFade";
 import type { StarRecord } from "../astronomy/starCatalog";
 import {
@@ -40,30 +41,56 @@ export interface ViewModeDef {
   label: string;
 }
 
+/** One up-mode button ("North Up"/"Ecliptic Up") - only meaningful for
+ *  Space View, see OrbitCameraRig.setUpMode. */
+export interface CameraUpModeEntryDef {
+  id: CameraUpMode;
+  label: string;
+}
+
+export interface CameraUpModePanelConfig {
+  entries: CameraUpModeEntryDef[];
+  activeId: CameraUpMode;
+  onSwitchActive: (id: CameraUpMode) => void;
+}
+
 export interface ScenePresetDef {
   id: string;
   label: string;
   onApply: () => void;
 }
 
-/** One astronomy-model button - "Heliocentric"/"Geocentric" today, more
- *  later. Deliberately a separate control from ViewModeDef/camera: model
- *  choice (how bodies move) and view choice (how the result is displayed)
- *  are independent axes - see AstronomyModelRegistry in main.ts. */
-export interface AstronomyModelEntryDef {
+/** One model's own explanatory-diagram controls - "Heliocentric"/
+ *  "Geocentric" today, more later. There is no "active" model anymore (see
+ *  AstronomyModelRegistry) - each model's Sun/Moon/orbit-lines are fully
+ *  independent toggles, so multiple models' diagrams can be shown at once
+ *  to compare them directly. Deliberately separate from ViewModeDef/camera:
+ *  model choice (how bodies move) and view choice (how the result is
+ *  displayed) are independent axes. */
+export interface AstronomyModelEntryConfig {
   id: string;
   label: string;
+  sun: ToggleConfig;
+  moon: ToggleConfig;
+  orbitLines: ToggleConfig;
 }
 
 export interface AstronomyModelPanelConfig {
-  entries: AstronomyModelEntryDef[];
-  activeId: string;
-  onSwitchActive: (id: string) => void;
+  models: AstronomyModelEntryConfig[];
 }
 
 export interface ObserverEntryDef {
   id: string;
   label: string;
+}
+
+/** One observer's own Zenith/Grid toggles - independent of which observer
+ *  is "active" (see ObserverRegistry's doc comment). */
+export interface ObserverEntryPanelConfig {
+  id: string;
+  label: string;
+  zenith: ToggleConfig;
+  grid: ToggleConfig;
 }
 
 export interface ObserverPanelConfig {
@@ -72,8 +99,7 @@ export interface ObserverPanelConfig {
   onSwitchActive: (id: string) => void;
   onAddObserver: () => void;
   markersVisible: ToggleConfig;
-  zenith: ToggleConfig;
-  grid: ToggleConfig;
+  observerToggles: ObserverEntryPanelConfig[];
 }
 
 export interface ControlPanelConfig {
@@ -90,6 +116,8 @@ export interface ControlPanelConfig {
   sunMoon: {
     sun: ToggleConfig;
     moon: ToggleConfig;
+    sunEclipticPath: ToggleConfig;
+    moonSkyPath: ToggleConfig;
   };
   celestialSphere: {
     visible: ToggleConfig;
@@ -102,14 +130,17 @@ export interface ControlPanelConfig {
     celestialSphere: StarSystemConfig;
   };
   constellations: {
-    lines: ToggleConfig;
-    names: ToggleConfig;
+    linesSky: ToggleConfig;
+    linesGlobe: ToggleConfig;
+    namesSky: ToggleConfig;
+    namesGlobe: ToggleConfig;
   };
   astronomyModel: AstronomyModelPanelConfig;
   observer: ObserverPanelConfig;
   camera: {
     viewModes: ViewModeDef[];
     onCameraModeChange: (mode: CameraMode) => void;
+    upMode: CameraUpModePanelConfig;
   };
   time: {
     onPlayPauseChange: (paused: boolean) => void;
@@ -154,12 +185,13 @@ function formatDecDegrees(decDeg: number): string {
 export class ControlPanel {
   readonly element: HTMLElement;
   private readonly viewButtons: Partial<Record<CameraMode, HTMLButtonElement>> = {};
-  private readonly modelButtons: Record<string, HTMLButtonElement> = {};
+  private readonly upModeButtons: Partial<Record<CameraUpMode, HTMLButtonElement>> = {};
   private readonly observerButtons: Record<string, HTMLButtonElement> = {};
   private readonly layerCheckboxes: Record<string, HTMLInputElement> = {};
   private readonly selectedStarBody: HTMLElement;
   private selectedStarSection?: HTMLDetailsElement;
   private observerSwitcherElement?: HTMLElement;
+  private observerTogglesContainer?: HTMLElement;
   private observerLatLonLabel?: HTMLElement;
   private onSwitchActiveObserver?: (id: string) => void;
 
@@ -172,14 +204,9 @@ export class ControlPanel {
     this.element.appendChild(this.buildSceneSection(config));
     this.element.appendChild(this.buildEarthSection(config));
     this.element.appendChild(this.buildAstronomyModelSection(config));
+    this.element.appendChild(this.buildSkySection(config));
     this.element.appendChild(this.buildObserverSection(config));
-    this.element.appendChild(this.buildSunMoonSection(config));
-    this.element.appendChild(this.buildCelestialSphereSection(config));
-    this.element.appendChild(this.buildBackgroundStarsSection(config));
-    this.element.appendChild(this.buildConstellationsSection(config));
     this.element.appendChild(this.buildSelectedStarSection());
-    this.element.appendChild(this.buildGuidesSection());
-    this.element.appendChild(this.buildTeachingSection());
     this.element.appendChild(this.buildCameraSection(config));
     this.element.appendChild(this.buildTimeSection(config));
 
@@ -192,9 +219,9 @@ export class ControlPanel {
     }
   }
 
-  setActiveAstronomyModel(id: string): void {
-    for (const [entryId, button] of Object.entries(this.modelButtons)) {
-      button.classList.toggle("active", entryId === id);
+  setActiveUpMode(mode: CameraUpMode): void {
+    for (const [buttonMode, button] of Object.entries(this.upModeButtons)) {
+      button?.classList.toggle("active", buttonMode === mode);
     }
   }
 
@@ -217,6 +244,22 @@ export class ControlPanel {
     button.addEventListener("click", () => this.onSwitchActiveObserver?.(entry.id));
     this.observerButtons[entry.id] = button;
     this.observerSwitcherElement.appendChild(button);
+  }
+
+  /** Appends a new observer's Zenith/Grid toggle row - used when "Add
+   *  Observer" creates a new entry at runtime, mirroring addObserverButton
+   *  (the toggle list isn't fixed at construction either). */
+  addObserverToggleRow(entry: ObserverEntryPanelConfig): void {
+    if (!this.observerTogglesContainer) return;
+    this.observerTogglesContainer.appendChild(this.buildObserverToggleRow(entry));
+  }
+
+  private buildObserverToggleRow(entry: ObserverEntryPanelConfig): HTMLElement {
+    return createSection(entry.label, false, [
+      this.registerLayerCheckbox(`${entry.id}Zenith`, createCheckbox("Show Zenith", entry.zenith.checked, entry.zenith.onChange)).element,
+      this.registerLayerCheckbox(`${entry.id}AltAzGrid`, createCheckbox("Show Alt/Az Grid", entry.grid.checked, entry.grid.onChange))
+        .element,
+    ]);
   }
 
   /** Live lat/lon readout for the active observer - pushed once per frame
@@ -312,20 +355,26 @@ export class ControlPanel {
     return createSection("Earth", true, content);
   }
 
+  /** No "active" model anymore (see AstronomyModelRegistry) - each model
+   *  gets its own nested subsection with fully independent Sun/Moon/Orbital
+   *  Lines checkboxes, so multiple models' diagrams can be shown at once.
+   *  Layer ids here (`${id}SunMarkerGlobe` etc.) must match the naming
+   *  buildModelDiagram uses in main.ts. */
   private buildAstronomyModelSection(config: ControlPanelConfig): HTMLElement {
-    const { element, buttons } = createButtonGroup(
-      config.astronomyModel.entries.map((entry) => ({
-        key: entry.id,
-        label: entry.label,
-        onClick: () => config.astronomyModel.onSwitchActive(entry.id),
-      })),
+    const modelSections = config.astronomyModel.models.map((entry) =>
+      createSection(entry.label, false, [
+        this.registerLayerCheckbox(`${entry.id}SunMarkerGlobe`, createCheckbox("Sun visible", entry.sun.checked, entry.sun.onChange))
+          .element,
+        this.registerLayerCheckbox(`${entry.id}MoonMarkerGlobe`, createCheckbox("Moon visible", entry.moon.checked, entry.moon.onChange))
+          .element,
+        this.registerLayerCheckbox(
+          `${entry.id}OrbitLines`,
+          createCheckbox("Show Orbital Lines", entry.orbitLines.checked, entry.orbitLines.onChange),
+        ).element,
+      ]),
     );
-    for (const [id, button] of Object.entries(buttons)) {
-      this.modelButtons[id] = button;
-    }
-    this.setActiveAstronomyModel(config.astronomyModel.activeId);
 
-    return createSection("Astronomy Model", true, [element, createPlaceholder("Model paths - coming soon.")]);
+    return createSection("Astronomy Model", true, [...modelSections, createPlaceholder("Model paths - coming soon.")]);
   }
 
   private buildObserverSection(config: ControlPanelConfig): HTMLElement {
@@ -350,6 +399,12 @@ export class ControlPanel {
     this.observerLatLonLabel = document.createElement("div");
     this.observerLatLonLabel.className = "control-selected-star-line";
 
+    this.observerTogglesContainer = document.createElement("div");
+    this.observerTogglesContainer.className = "control-panel-section-body";
+    for (const entry of obs.observerToggles) {
+      this.observerTogglesContainer.appendChild(this.buildObserverToggleRow(entry));
+    }
+
     const content = [
       switcherElement,
       addButton,
@@ -357,18 +412,49 @@ export class ControlPanel {
       createPlaceholder("Hover an observer pin for a hand cursor, then drag to move it."),
       this.registerLayerCheckbox("observerMarkers", createCheckbox("Show Observer Markers", obs.markersVisible.checked, obs.markersVisible.onChange))
         .element,
-      this.registerLayerCheckbox("zenith", createCheckbox("Show Zenith", obs.zenith.checked, obs.zenith.onChange)).element,
-      this.registerLayerCheckbox("altAzGrid", createCheckbox("Show Alt/Az Grid", obs.grid.checked, obs.grid.onChange)).element,
+      createSubsectionHeading("Per-Observer Zenith / Grid"),
+      this.observerTogglesContainer,
       createPlaceholder("Heading and Altitude are coming soon."),
     ];
     return createSection("Observer", false, content);
   }
 
+  /** Everything rendered in the sky or on the small explanatory globe -
+   *  Sun/Moon, the celestial sphere diagram, both star fields, and
+   *  constellations - nested one level under a single "Sky" accordion
+   *  instead of four separate top-level ones. Purely a menu-declutter move:
+   *  every child section/checkbox id is unchanged, so nothing about how
+   *  layers are toggled or synced (see syncLayerToggles/registerLayerCheckbox)
+   *  changes, only where it lives in the panel. */
+  private buildSkySection(config: ControlPanelConfig): HTMLElement {
+    return createSection("Sky", true, [
+      this.buildSunMoonSection(config),
+      this.buildCelestialSphereSection(config),
+      this.buildBackgroundStarsSection(config),
+      this.buildConstellationsSection(config),
+    ]);
+  }
+
+  /** The always-on immersive sky markers only - "what's actually in today's
+   *  sky", not tied to any model's own diagram. See Astronomy Model's nested
+   *  per-model subsections (buildAstronomyModelSection) for the Sun/Moon
+   *  markers + orbit lines that belong to a specific model's explanatory
+   *  globe diagram. */
   private buildSunMoonSection(config: ControlPanelConfig): HTMLElement {
     const content = [
-      this.registerLayerCheckbox("sunMarker", createCheckbox("Sun visible", config.sunMoon.sun.checked, config.sunMoon.sun.onChange)).element,
-      this.registerLayerCheckbox("moonMarker", createCheckbox("Moon visible", config.sunMoon.moon.checked, config.sunMoon.moon.onChange)).element,
-      createPlaceholder("Labels and Trails - coming soon"),
+      this.registerLayerCheckbox("sunMarkerSky", createCheckbox("Sun visible", config.sunMoon.sun.checked, config.sunMoon.sun.onChange))
+        .element,
+      this.registerLayerCheckbox("moonMarkerSky", createCheckbox("Moon visible", config.sunMoon.moon.checked, config.sunMoon.moon.onChange))
+        .element,
+      this.registerLayerCheckbox(
+        "sunEclipticPath",
+        createCheckbox("Sun Ecliptic Path", config.sunMoon.sunEclipticPath.checked, config.sunMoon.sunEclipticPath.onChange),
+      ).element,
+      this.registerLayerCheckbox(
+        "moonSkyPath",
+        createCheckbox("Moon Sky Path", config.sunMoon.moonSkyPath.checked, config.sunMoon.moonSkyPath.onChange),
+      ).element,
+      createPlaceholder("Labels, Motion Trails, Highlights, and Ghost Positions - coming soon"),
     ];
     return createSection("Sun & Moon", false, content);
   }
@@ -454,16 +540,30 @@ export class ControlPanel {
    *  destroy constellation data (it's resolved once against the shared
    *  catalog at load, not derived from what's currently drawn - see
    *  constellationCatalog.ts), and turning constellation lines/names off
-   *  doesn't affect stars either. */
+   *  doesn't affect stars either. Sky-tier and globe-tier each get their
+   *  own checkbox (rather than one fused toggle) since "show constellations
+   *  in the immersive sky" and "show them on the small explanatory globe"
+   *  are independent teaching choices. */
   private buildConstellationsSection(config: ControlPanelConfig): HTMLElement {
+    const c = config.constellations;
     const content = [
+      createSubsectionHeading("Sky"),
       this.registerLayerCheckbox(
-        "constellationLines",
-        createCheckbox("Constellation Lines", config.constellations.lines.checked, config.constellations.lines.onChange),
+        "constellationLinesSky",
+        createCheckbox("Constellation Lines", c.linesSky.checked, c.linesSky.onChange),
       ).element,
       this.registerLayerCheckbox(
-        "constellationNames",
-        createCheckbox("Constellation Names", config.constellations.names.checked, config.constellations.names.onChange),
+        "constellationNamesSky",
+        createCheckbox("Constellation Names", c.namesSky.checked, c.namesSky.onChange),
+      ).element,
+      createSubsectionHeading("Globe"),
+      this.registerLayerCheckbox(
+        "constellationLinesGlobe",
+        createCheckbox("Constellation Lines", c.linesGlobe.checked, c.linesGlobe.onChange),
+      ).element,
+      this.registerLayerCheckbox(
+        "constellationNamesGlobe",
+        createCheckbox("Constellation Names", c.namesGlobe.checked, c.namesGlobe.onChange),
       ).element,
     ];
     return createSection("Constellations", false, content);
@@ -474,16 +574,6 @@ export class ControlPanel {
     const section = createSection("Selected Star", true, [this.selectedStarBody]);
     this.selectedStarSection = section;
     return section;
-  }
-
-  private buildGuidesSection(): HTMLElement {
-    return createSection("Guides", false, [createPlaceholder("Grids and Labels are coming soon.")]);
-  }
-
-  private buildTeachingSection(): HTMLElement {
-    return createSection("Teaching", false, [
-      createPlaceholder("Motion Trails, Highlights, and Ghost Positions are coming soon."),
-    ]);
   }
 
   private buildCameraSection(config: ControlPanelConfig): HTMLElement {
@@ -497,7 +587,27 @@ export class ControlPanel {
     for (const [mode, button] of Object.entries(buttons)) {
       this.viewButtons[mode as CameraMode] = button;
     }
-    return createSection("Camera", true, [element]);
+
+    // Only affects Space View (see OrbitCameraRig.setUpMode) - left always
+    // clickable rather than disabled in Ground View, since picking a mode
+    // there is harmless and just takes effect next time you're in Space.
+    const { element: upModeElement, buttons: upModeButtons } = createButtonGroup(
+      config.camera.upMode.entries.map((entry) => ({
+        key: entry.id,
+        label: entry.label,
+        onClick: () => config.camera.upMode.onSwitchActive(entry.id),
+      })),
+    );
+    for (const [id, button] of Object.entries(upModeButtons)) {
+      this.upModeButtons[id as CameraUpMode] = button;
+    }
+    this.setActiveUpMode(config.camera.upMode.activeId);
+
+    return createSection("Camera", true, [
+      element,
+      createSubsectionHeading("Up (Space View)"),
+      upModeElement,
+    ]);
   }
 
   private buildTimeSection(config: ControlPanelConfig): HTMLElement {

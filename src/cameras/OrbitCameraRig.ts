@@ -1,6 +1,11 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
 import type { CameraRig } from "./CameraRig";
+import { CameraUpMode } from "./CameraUpMode";
+import { ECLIPTIC_POLE_IN_WORLD } from "../astronomy/frames";
+
+const EQUATORIAL_UP = new THREE.Vector3(0, 1, 0);
+const ECLIPTIC_UP = new THREE.Vector3(ECLIPTIC_POLE_IN_WORLD.x, ECLIPTIC_POLE_IN_WORLD.y, ECLIPTIC_POLE_IN_WORLD.z);
 
 export interface OrbitCameraRigOptions {
   domElement: HTMLElement;
@@ -22,22 +27,59 @@ export interface OrbitCameraRigOptions {
  */
 export class OrbitCameraRig implements CameraRig {
   readonly camera: THREE.PerspectiveCamera;
-  readonly controls: OrbitControls;
+  controls: OrbitControls;
   private readonly domElement: HTMLElement;
+  private readonly minDistance: number;
+  private readonly maxDistance: number;
+  private upMode: CameraUpMode = CameraUpMode.Equatorial;
 
   constructor(options: OrbitCameraRigOptions) {
     this.camera = new THREE.PerspectiveCamera(options.fov ?? 50, 1, options.near ?? 0.1, options.far ?? 20000);
     this.camera.position.set(...options.initialPosition);
     this.domElement = options.domElement;
+    this.minDistance = options.minDistance;
+    this.maxDistance = options.maxDistance;
 
-    this.controls = new OrbitControls(this.camera, options.domElement);
-    this.controls.target.set(0, 0, 0);
-    this.controls.enableDamping = true;
-    this.controls.dampingFactor = 0.08;
-    this.controls.minDistance = options.minDistance;
-    this.controls.maxDistance = options.maxDistance;
-    this.controls.enabled = false;
+    this.controls = this.createControls();
+  }
+
+  private createControls(): OrbitControls {
+    const controls = new OrbitControls(this.camera, this.domElement);
+    controls.target.set(0, 0, 0);
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.08;
+    controls.minDistance = this.minDistance;
+    controls.maxDistance = this.maxDistance;
+    controls.enabled = false;
+    controls.update();
+    return controls;
+  }
+
+  /** Switches which fixed world direction reads as "up" on screen -
+   *  Equatorial (world +Y, Polaris/spin-axis - the default) or Ecliptic
+   *  (the fixed ecliptic pole from astronomy/frames.ts). OrbitControls
+   *  derives its spherical-coordinate math from a quaternion computed from
+   *  camera.up at construction time, so mutating camera.up on a live
+   *  instance doesn't re-orient anything by itself - the controls instance
+   *  has to be rebuilt. Camera position and orbit target are carried over
+   *  so the view doesn't jump; only the on-screen "roll" (which direction
+   *  reads as vertical) changes. */
+  setUpMode(mode: CameraUpMode): void {
+    if (mode === this.upMode) return;
+    this.upMode = mode;
+    this.camera.up.copy(mode === CameraUpMode.Ecliptic ? ECLIPTIC_UP : EQUATORIAL_UP);
+
+    const wasEnabled = this.controls.enabled;
+    const target = this.controls.target.clone();
+    this.controls.dispose();
+    this.controls = this.createControls();
+    this.controls.target.copy(target);
+    this.controls.enabled = wasEnabled;
     this.controls.update();
+  }
+
+  getUpMode(): CameraUpMode {
+    return this.upMode;
   }
 
   setActive(active: boolean): void {

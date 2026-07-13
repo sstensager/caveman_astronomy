@@ -14,21 +14,37 @@ export interface ScenePreset {
   cameraMode?: CameraMode;
 }
 
+// Model ids must match main.ts's modelRegistry.add() calls - each model's
+// explanatory-globe diagram (Sun/Moon markers + orbit lines) is fully
+// independent (see AstronomyModelRegistry's doc comment - no "active" model
+// anymore), so presets address them individually rather than through one
+// shared id.
+const MODEL_IDS = ["heliocentric", "geocentric"] as const;
+
 const ALL_LAYERS_OFF: Record<string, boolean> = {
   earthBase: false,
   continents: false,
   axis: false,
   backgroundStars: false,
   celestialSphereStars: false,
-  sunMarker: false,
-  moonMarker: false,
+  sunMarkerSky: false,
+  moonMarkerSky: false,
+  sunEclipticPath: false,
+  moonSkyPath: false,
   celestialSphereShell: false,
-  zenithSky: false,
-  zenithGlobe: false,
-  altAzGridSky: false,
-  altAzGridGlobe: false,
   observerMarkers: false,
+  // observer-1's zenith/grid (see ObserverRegistry) - the only observer ID
+  // presets can rely on always existing; any observers added later via
+  // "Add Observer" are personal, per-observer toggles a preset shouldn't
+  // reach into.
+  "observer-1Zenith": false,
+  "observer-1AltAzGrid": false,
 };
+for (const modelId of MODEL_IDS) {
+  ALL_LAYERS_OFF[`${modelId}SunMarkerGlobe`] = false;
+  ALL_LAYERS_OFF[`${modelId}MoonMarkerGlobe`] = false;
+  ALL_LAYERS_OFF[`${modelId}OrbitLines`] = false;
+}
 
 export const SCENE_PRESETS: ScenePreset[] = [
   {
@@ -46,7 +62,7 @@ export const SCENE_PRESETS: ScenePreset[] = [
   {
     id: "earthAndSun",
     label: "Earth + Sun",
-    layers: { ...ALL_LAYERS_OFF, earthBase: true, continents: true, sunMarker: true },
+    layers: { ...ALL_LAYERS_OFF, earthBase: true, continents: true, sunMarkerSky: true },
     cameraMode: CameraMode.Space,
   },
   {
@@ -57,9 +73,7 @@ export const SCENE_PRESETS: ScenePreset[] = [
       earthBase: true,
       continents: true,
       sunMarkerSky: true,
-      sunMarkerGlobe: false,
       moonMarkerSky: true,
-      moonMarkerGlobe: false,
       backgroundStars: true,
       observerMarkers: true,
     },
@@ -68,14 +82,25 @@ export const SCENE_PRESETS: ScenePreset[] = [
   {
     id: "celestialSphere",
     label: "Celestial Sphere",
+    // The complete explanatory-globe diagram: Earth-centered shell, its own
+    // star field, plus Heliocentric's globe-tier Sun/Moon markers and their
+    // real elliptical orbit lines (see OrbitLineLayer) - one click for "show
+    // me the whole small diagram together" instead of hunting through
+    // Astronomy Model's per-model checkboxes separately. Heliocentric is an
+    // arbitrary pick (both models render identically here - see
+    // AstronomyModelRegistry) - turn on Geocentric's own checkboxes too to
+    // compare both diagrams at once.
     layers: {
       ...ALL_LAYERS_OFF,
       earthBase: true,
       continents: true,
       celestialSphereShell: true,
       celestialSphereStars: true,
-      sunMarker: true,
-      moonMarker: true,
+      sunMarkerSky: true,
+      moonMarkerSky: true,
+      heliocentricSunMarkerGlobe: true,
+      heliocentricMoonMarkerGlobe: true,
+      heliocentricOrbitLines: true,
     },
     cameraMode: CameraMode.Space,
   },
@@ -83,16 +108,13 @@ export const SCENE_PRESETS: ScenePreset[] = [
     id: "teachingDefault",
     label: "Teaching Default",
     layers: {
+      ...ALL_LAYERS_OFF,
       earthBase: true,
       continents: true,
       axis: true,
       backgroundStars: true,
-      celestialSphereStars: false,
       sunMarkerSky: true,
-      sunMarkerGlobe: false,
       moonMarkerSky: true,
-      moonMarkerGlobe: false,
-      celestialSphereShell: false,
       observerMarkers: true,
     },
     cameraMode: CameraMode.Space,

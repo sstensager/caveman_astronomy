@@ -1,11 +1,31 @@
 import * as THREE from "three";
 import type { Layer, LayerGroup } from "../layers/Layer";
 import type { Observer } from "./Observer";
+import { createLabelTexture } from "../utils/canvasLabel";
 
 const ALTITUDE_CIRCLES_DEG = [0, 30, 60];
 const ALTITUDE_CIRCLE_SEGMENTS = 48;
 const AZIMUTH_MERIDIAN_COUNT = 8;
 const AZIMUTH_MERIDIAN_SEGMENTS = 12;
+
+/** createLabelTexture's default canvas (256x64) is tuned for word-shaped
+ *  constellation names - a single compass letter drawn centered on it would
+ *  occupy a small fraction of the width, rendering as a tiny, hard-to-see
+ *  glyph lost in mostly-empty space. Square canvas + a font sized to fill
+ *  it instead. */
+function createCompassLetterTexture(text: string, color: string): THREE.CanvasTexture {
+  return createLabelTexture(text, color, { width: 64, height: 64, font: "bold 44px sans-serif" });
+}
+
+/** North at azimuth 0, increasing clockwise through East - matches
+ *  buildAltAzSamples'/update()'s direction(alt,az) parametrization exactly,
+ *  so a compass letter always sits precisely on the horizon circle it labels. */
+const COMPASS_POINTS: { letter: string; azimuthRad: number }[] = [
+  { letter: "N", azimuthRad: 0 },
+  { letter: "E", azimuthRad: Math.PI / 2 },
+  { letter: "S", azimuthRad: Math.PI },
+  { letter: "W", azimuthRad: (3 * Math.PI) / 2 },
+];
 
 interface AltAzSample {
   alt: number;
@@ -44,14 +64,24 @@ export interface AltAzGridLayerOptions {
   label: string;
   radius: number;
   color?: number;
+  /** Color for the N/S/E/W compass letters - defaults to white for
+   *  legibility against the grid's own (dimmer, semi-transparent) lines. */
+  compassColor?: string;
   getActiveObserver: () => Observer;
+  /** Defaults to createLabelTexture (real canvas text rendering) -
+   *  injectable so tests can verify the position/update math without a
+   *  canvas 2D context, which this project's vitest environment ("node",
+   *  not "jsdom") doesn't provide. Same pattern as ConstellationLabelsLayer. */
+  createTexture?: (text: string, color: string) => THREE.Texture;
 }
 
 /**
  * The active observer's personal altitude/azimuth grid: 3 altitude circles
- * (0/30/60 degrees) and 8 azimuth meridians (horizon to zenith), built from
- * the standard ENU parametrization direction(alt,az) = up*sin(alt) +
- * (north*cos(az) + east*sin(az))*cos(alt).
+ * (0/30/60 degrees), 8 azimuth meridians (horizon to zenith), and 4 N/S/E/W
+ * compass letters sitting on the horizon circle - all built from the
+ * standard ENU parametrization direction(alt,az) = up*sin(alt) +
+ * (north*cos(az) + east*sin(az))*cos(alt) (the compass letters are just this
+ * formula at alt=0, where the up term drops out).
  *
  * Always observer-centered on both display tiers (unconditionally offset
  * by frame.worldPosition) - same reasoning as ZenithLayer: altitude/azimuth
@@ -73,6 +103,7 @@ export class AltAzGridLayer implements Layer {
 
   private readonly samples: AltAzSample[];
   private readonly getActiveObserver: () => Observer;
+  private readonly compassSprites: { letter: string; azimuthRad: number; sprite: THREE.Sprite }[];
   private radius: number;
 
   constructor(options: AltAzGridLayerOptions) {
@@ -87,6 +118,23 @@ export class AltAzGridLayer implements Layer {
     const material = new THREE.LineBasicMaterial({ color: options.color ?? 0x66ccff, transparent: true, opacity: 0.5 });
     this.object3D = new THREE.LineSegments(geometry, material);
     this.object3D.name = `AltAzGridLayer.${options.id}`;
+
+    const createTexture = options.createTexture ?? createCompassLetterTexture;
+    const compassColor = options.compassColor ?? "#ffffff";
+    this.compassSprites = COMPASS_POINTS.map(({ letter, azimuthRad }) => {
+      const spriteMaterial = new THREE.SpriteMaterial({
+        map: createTexture(letter, compassColor),
+        sizeAttenuation: false,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+      });
+      const sprite = new THREE.Sprite(spriteMaterial);
+      sprite.scale.set(0.09, 0.09, 1);
+      sprite.renderOrder = 997;
+      this.object3D.add(sprite);
+      return { letter, azimuthRad, sprite };
+    });
   }
 
   update(): void {
@@ -107,6 +155,16 @@ export class AltAzGridLayer implements Layer {
       world.copy(frame.worldPosition).addScaledVector(direction, this.radius);
       positions.setXYZ(i, world.x, world.y, world.z);
     });
+
+    // Compass letters sit on the horizon (alt=0), so cosAlt=1 and the up
+    // term drops out - direction(az) = north*cos(az) + east*sin(az).
+    for (const point of this.compassSprites) {
+      direction
+        .copy(frame.north!)
+        .multiplyScalar(Math.cos(point.azimuthRad))
+        .addScaledVector(frame.east!, Math.sin(point.azimuthRad));
+      point.sprite.position.copy(frame.worldPosition).addScaledVector(direction, this.radius);
+    }
 
     positions.needsUpdate = true;
   }

@@ -3,6 +3,8 @@ import type { Observer, ObserverFrame } from "./Observer";
 import { BodyIds } from "../astronomy/types";
 import type { BodyId, UniverseState, Vector3Like } from "../astronomy/types";
 import { computeNorthEast } from "../utils/geo";
+import { subVectors } from "../astronomy/vectorMath";
+import { eclipticToWorld } from "../astronomy/frames";
 
 const WORLD_POLAR_AXIS = new THREE.Vector3(0, 1, 0);
 
@@ -47,6 +49,11 @@ export class GroundObserver implements Observer {
     if (!earth || !body) {
       throw new Error(`GroundObserver.getDirectionTo: unknown body "${bodyId}"`);
     }
-    return toVector3(body.position).sub(toVector3(earth.position)).normalize();
+    // Models express position in the ecliptic frame (see vectorMath.ts) -
+    // rotate into the fixed world/equatorial frame every other direction
+    // (stars, this observer's own up/north/east) already uses before
+    // treating it as a world-space direction. See frames.ts's doc comment.
+    const relativeEcliptic = subVectors(body.position, earth.position);
+    return toVector3(eclipticToWorld(relativeEcliptic)).normalize();
   }
 }

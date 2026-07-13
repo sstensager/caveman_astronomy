@@ -1,15 +1,18 @@
 import * as THREE from "three";
 import type { ObserverEntry } from "../observers/ObserverRegistry";
+import { POINT_SIZE_PX } from "../observers/ObserverMarker";
 
 /** Screen-space hover/pick radius in CSS pixels. ObserverMarker draws at a
- *  FIXED 26px gl_PointSize regardless of distance (see ObserverMarker.ts -
- *  no distance attenuation), so hit-testing has to be a screen-space
- *  distance check against the marker's projected position, not a 3D
- *  raycast against world-space geometry - a fixed world-space threshold
- *  would drift out of sync with the always-26px marker as the camera zooms.
- *  Slightly larger than the marker's own visual radius (13px) for a more
- *  forgiving grab target. */
-const HOVER_THRESHOLD_PX = 18;
+ *  FIXED gl_PointSize regardless of distance (see ObserverMarker.ts - no
+ *  distance attenuation), so hit-testing has to be a screen-space distance
+ *  check against the marker's projected position, not a 3D raycast against
+ *  world-space geometry - a fixed world-space threshold would drift out of
+ *  sync with the always-fixed-size marker as the camera zooms. Derived from
+ *  POINT_SIZE_PX (not a second hardcoded number) so bumping the marker's
+ *  size can't silently leave the grab target the old, smaller size -
+ *  slightly larger than the marker's own visual radius for a more forgiving
+ *  grab target. */
+const HOVER_THRESHOLD_PX = POINT_SIZE_PX * 0.7;
 
 /**
  * Direct-manipulation observer placement: hover any observer's pin to get a
