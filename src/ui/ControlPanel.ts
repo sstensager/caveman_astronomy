@@ -101,6 +101,10 @@ export interface ControlPanelConfig {
     background: StarSystemConfig;
     celestialSphere: StarSystemConfig;
   };
+  constellations: {
+    lines: ToggleConfig;
+    names: ToggleConfig;
+  };
   astronomyModel: AstronomyModelPanelConfig;
   observer: ObserverPanelConfig;
   camera: {
@@ -172,6 +176,7 @@ export class ControlPanel {
     this.element.appendChild(this.buildSunMoonSection(config));
     this.element.appendChild(this.buildCelestialSphereSection(config));
     this.element.appendChild(this.buildBackgroundStarsSection(config));
+    this.element.appendChild(this.buildConstellationsSection(config));
     this.element.appendChild(this.buildSelectedStarSection());
     this.element.appendChild(this.buildGuidesSection());
     this.element.appendChild(this.buildTeachingSection());
@@ -443,6 +448,25 @@ export class ControlPanel {
 
   private buildBackgroundStarsSection(config: ControlPanelConfig): HTMLElement {
     return createSection("Background Stars", false, this.buildStarSystemControls("backgroundStars", config.stars.background));
+  }
+
+  /** Independent of both star toggles above - turning stars off doesn't
+   *  destroy constellation data (it's resolved once against the shared
+   *  catalog at load, not derived from what's currently drawn - see
+   *  constellationCatalog.ts), and turning constellation lines/names off
+   *  doesn't affect stars either. */
+  private buildConstellationsSection(config: ControlPanelConfig): HTMLElement {
+    const content = [
+      this.registerLayerCheckbox(
+        "constellationLines",
+        createCheckbox("Constellation Lines", config.constellations.lines.checked, config.constellations.lines.onChange),
+      ).element,
+      this.registerLayerCheckbox(
+        "constellationNames",
+        createCheckbox("Constellation Names", config.constellations.names.checked, config.constellations.names.onChange),
+      ).element,
+    ];
+    return createSection("Constellations", false, content);
   }
 
   private buildSelectedStarSection(): HTMLElement {

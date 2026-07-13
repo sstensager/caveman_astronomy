@@ -11,11 +11,14 @@ import { AxisLayer } from "./layers/earth/AxisLayer";
 import { StarsLayer } from "./layers/sky/StarsLayer";
 import { CelestialMarkerLayer } from "./layers/sky/CelestialMarkerLayer";
 import { CelestialSphereShell } from "./layers/sky/CelestialSphereShell";
+import { ConstellationLinesLayer } from "./layers/sky/ConstellationLinesLayer";
+import { ConstellationLabelsLayer } from "./layers/sky/ConstellationLabelsLayer";
 import { ModernHeliocentricModel } from "./astronomy/models/ModernHeliocentricModel";
 import { GeocentricModel } from "./astronomy/models/GeocentricModel";
 import { AstronomyModelRegistry } from "./astronomy/AstronomyModelRegistry";
 import { BodyIds } from "./astronomy/types";
 import { STAR_CATALOG } from "./astronomy/starCatalog";
+import { RESOLVED_CONSTELLATION_CULTURES } from "./astronomy/constellationCatalog";
 import { GroundObserver } from "./observers/GroundObserver";
 import { ObserverStation } from "./observers/ObserverStation";
 import { ObserverRegistry, type ObserverEntry } from "./observers/ObserverRegistry";
@@ -170,6 +173,53 @@ const celestialSphereStars = new StarsLayer({
   supportsHemisphereFade: true,
 });
 
+// Only "western" ships today, but this flattens whichever cultures exist -
+// see constellationCatalog.ts's ConstellationCulture. Independent of the
+// star toggles above: resolved once against the shared STAR_CATALOG at
+// load (not derived from what's currently drawn), so turning stars off
+// never destroys this, and turning this off never touches stars.
+const ALL_CONSTELLATIONS = RESOLVED_CONSTELLATION_CULTURES.flatMap((culture) => culture.constellations);
+
+const constellationLinesSky = new ConstellationLinesLayer({
+  id: "constellationLinesSky",
+  label: "Constellation Lines (sky)",
+  group: "Sky.Observation",
+  radius: CELESTIAL_SPHERE_RADIUS,
+  constellations: ALL_CONSTELLATIONS,
+  getObserver: getActiveObserver,
+});
+const constellationLinesGlobe = new ConstellationLinesLayer({
+  id: "constellationLinesGlobe",
+  label: "Constellation Lines (globe)",
+  group: "Sky.Geometry",
+  radius: CELESTIAL_GLOBE_RADIUS,
+  constellations: ALL_CONSTELLATIONS,
+});
+const constellationLines = new CompositeLayer("constellationLines", "Show Constellation Lines", "Sky.Observation", [
+  constellationLinesSky,
+  constellationLinesGlobe,
+]);
+
+const constellationNamesSky = new ConstellationLabelsLayer({
+  id: "constellationNamesSky",
+  label: "Constellation Names (sky)",
+  group: "Sky.Observation",
+  radius: CELESTIAL_SPHERE_RADIUS,
+  constellations: ALL_CONSTELLATIONS,
+  getObserver: getActiveObserver,
+});
+const constellationNamesGlobe = new ConstellationLabelsLayer({
+  id: "constellationNamesGlobe",
+  label: "Constellation Names (globe)",
+  group: "Sky.Geometry",
+  radius: CELESTIAL_GLOBE_RADIUS,
+  constellations: ALL_CONSTELLATIONS,
+});
+const constellationNames = new CompositeLayer("constellationNames", "Show Constellation Names", "Sky.Observation", [
+  constellationNamesSky,
+  constellationNamesGlobe,
+]);
+
 // All four markers below share the SAME getActiveModel/getActiveObserver
 // getters - confirming they're all just different VIEWS (sky vs globe
 // display radius) of the one active model, not tied to different models.
@@ -269,6 +319,12 @@ layers.register(continents);
 layers.register(axis);
 layers.register(backgroundStars);
 layers.register(celestialSphereStars);
+layers.register(constellationLines);
+layers.register(constellationLinesSky);
+layers.register(constellationLinesGlobe);
+layers.register(constellationNames);
+layers.register(constellationNamesSky);
+layers.register(constellationNamesGlobe);
 layers.register(sunMarker);
 layers.register(sunMarkerSky);
 layers.register(sunMarkerGlobe);
@@ -286,6 +342,8 @@ layers.register(observerMarkersLayer);
 
 scene.add(earthBase.object3D);
 scene.add(backgroundStars.object3D, celestialSphereStars.object3D);
+scene.add(constellationLinesSky.object3D, constellationLinesGlobe.object3D);
+scene.add(constellationNamesSky.object3D, constellationNamesGlobe.object3D);
 scene.add(zenithSky.object3D, zenithGlobe.object3D);
 scene.add(altAzGridSky.object3D, altAzGridGlobe.object3D);
 scene.add(sunMarkerSky.object3D, sunMarkerGlobe.object3D);
@@ -301,6 +359,10 @@ const defaultLayerVisibility: Record<string, boolean> = {
   axis: true,
   backgroundStars: true,
   celestialSphereStars: false,
+  constellationLinesSky: false,
+  constellationLinesGlobe: false,
+  constellationNamesSky: false,
+  constellationNamesGlobe: false,
   sunMarkerSky: true,
   sunMarkerGlobe: false,
   moonMarkerSky: true,
@@ -349,6 +411,8 @@ const onHemisphereModeChange = (mode: HemisphereMode): void => {
 const onCelestialSphereRadiusChange = (radius: number): void => {
   celestialSphereShell.setRadius(radius);
   celestialSphereStars.setRadius(radius);
+  constellationLinesGlobe.setRadius(radius);
+  constellationNamesGlobe.setRadius(radius);
   sunMarkerGlobe.setRadius(radius);
   moonMarkerGlobe.setRadius(radius);
   zenithGlobe.setRadius(radius);
@@ -553,6 +617,10 @@ const panelConfig: ControlPanelConfig = {
         onChange: (v) => celestialSphereStars.setOpacity(v),
       },
     },
+  },
+  constellations: {
+    lines: { checked: false, onChange: (v) => layers.show({ constellationLines: v }) },
+    names: { checked: false, onChange: (v) => layers.show({ constellationNames: v }) },
   },
   camera: {
     viewModes,
