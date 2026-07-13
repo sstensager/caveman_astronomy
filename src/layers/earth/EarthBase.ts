@@ -9,15 +9,24 @@ import { EARTH_AXIAL_TILT_DEG } from "../../astronomy/constants";
  *  - `object3D` (orbitGroup): where Earth sits in space. Idle today,
  *    will carry Earth's revolution around the Sun later.
  *  - `tiltGroup`: fixed axial tilt, settable via setAxialTilt(). Tilts
- *    around the same world Z axis as ModernHeliocentricModel's
- *    (unused-so-far) EARTH_ROTATION_AXIS constant ({x:sin(tilt),
- *    y:cos(tilt), z:0}) - a FIXED direction in the ecliptic/world frame,
- *    not relative to Earth's current orbital position, matching how real
- *    axial tilt stays pointed at the same direction in space as Earth
- *    orbits (that constancy is what causes seasons). Keeping this
- *    convention consistent now means a future Sun-direction-tracking
- *    light (day/night terminator) will show correct seasonal behavior
- *    without EarthBase needing to know anything about orbital position.
+ *    around a fixed world Z axis - a FIXED direction in the ecliptic/world
+ *    frame, not relative to Earth's current orbital position, matching how
+ *    real axial tilt stays pointed at the same direction in space as Earth
+ *    orbits (that constancy is what causes seasons).
+ *
+ *    World +Y is NOT the ecliptic pole here - it's the true celestial pole,
+ *    i.e. wherever the star catalog's Dec=+90 (very close to Polaris) is
+ *    drawn (see starCatalog.ts's raDecToVector3), since that's the one
+ *    fixed reference every rendered star position already uses. So
+ *    setAxialTilt(EARTH_AXIAL_TILT_DEG) - the real, default tilt - has to
+ *    put the axis EXACTLY at world +Y to line up with the real Polaris,
+ *    not tilted away from it: the tilt applied here is the DEVIATION from
+ *    EARTH_AXIAL_TILT_DEG, not the raw slider value. Only deviating from
+ *    the real value should visibly swing the axis away from Polaris - that
+ *    misalignment is the whole point of letting the tilt be explored
+ *    ("what if Earth's tilt were different, what would the pole star be
+ *    instead"), so it must be zero exactly at the real value, not for
+ *    every value.
  *  - `rotationGroup`: spins around the (tilted) axis. Geographic/
  *    environmental layers (continents, clouds, grids, the axis line) and
  *    any number of ObserverStation instances all parent into this so they
@@ -67,9 +76,12 @@ export class EarthBase implements Layer {
 
   /** Tilts the rotation axis by `tiltDeg` from vertical, around a fixed
    *  world-space direction - see the class doc comment for why this must
-   *  stay orbit-position-independent. 0 = no tilt (straight up). */
+   *  stay orbit-position-independent, and why the actual rotation applied
+   *  is the deviation from EARTH_AXIAL_TILT_DEG (the real value), not
+   *  `tiltDeg` itself - only that deviation should swing the axis away
+   *  from world +Y/Polaris. */
   setAxialTilt(tiltDeg: number): void {
-    this.tiltGroup.rotation.z = -THREE.MathUtils.degToRad(tiltDeg);
+    this.tiltGroup.rotation.z = -THREE.MathUtils.degToRad(tiltDeg - EARTH_AXIAL_TILT_DEG);
   }
 
   update(deltaSeconds: number): void {
