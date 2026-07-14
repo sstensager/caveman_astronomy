@@ -44,3 +44,28 @@ describe("EarthBase - axial tilt", () => {
     expect(axis.y).toBeCloseTo(1, 10);
   });
 });
+
+describe("EarthBase - setOrbitPosition", () => {
+  it("moves the outer orbitGroup (object3D) to the given world position", () => {
+    const earthBase = new EarthBase();
+    earthBase.setOrbitPosition({ x: 12, y: -3, z: 7 });
+    expect(earthBase.object3D.position.x).toBeCloseTo(12);
+    expect(earthBase.object3D.position.y).toBeCloseTo(-3);
+    expect(earthBase.object3D.position.z).toBeCloseTo(7);
+  });
+
+  it("carries the mesh and everything parented under rotationGroup along with it", () => {
+    const earthBase = new EarthBase();
+    earthBase.setOrbitPosition({ x: 100, y: 0, z: 0 });
+    earthBase.object3D.updateMatrixWorld(true);
+    const meshWorldPos = earthBase.mesh.getWorldPosition(new THREE.Vector3());
+    expect(meshWorldPos.x).toBeCloseTo(100);
+  });
+
+  it("defaults to the origin - unaffected until explicitly called", () => {
+    const earthBase = new EarthBase();
+    expect(earthBase.object3D.position.x).toBeCloseTo(0);
+    expect(earthBase.object3D.position.y).toBeCloseTo(0);
+    expect(earthBase.object3D.position.z).toBeCloseTo(0);
+  });
+});

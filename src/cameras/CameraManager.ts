@@ -26,7 +26,11 @@ export class CameraManager {
       domElement,
       initialPosition: [EARTH_RADIUS * 3, EARTH_RADIUS * 2, EARTH_RADIUS * 3],
       minDistance: EARTH_RADIUS * 1.5,
-      maxDistance: EARTH_RADIUS * 40,
+      // 200x (not 40x) so "Center: Sun" mode's much larger Earth-Sun
+      // distance (CENTER_SUN_EARTH_ORBIT_SCALE, config/constants.ts -
+      // EARTH_RADIUS*60) can actually be zoomed out to and comfortably
+      // framed with margin, not just barely reached.
+      maxDistance: EARTH_RADIUS * 200,
     });
     this.rigs = {
       [CameraMode.Space]: this.spaceRig,
@@ -43,6 +47,13 @@ export class CameraManager {
 
   getSpaceUpMode(): CameraUpMode {
     return this.spaceRig.getUpMode();
+  }
+
+  /** Only meaningful in Space View - see the class doc comment on spaceRig.
+   *  Lets "Center: Sun" mode's Earth-Sun distance slider (main.ts) keep the
+   *  zoom-out range comfortably ahead of the orbit's actual size. */
+  setSpaceMaxDistance(distance: number): void {
+    this.spaceRig.setMaxDistance(distance);
   }
 
   setMode(mode: CameraMode): void {

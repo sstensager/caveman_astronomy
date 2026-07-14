@@ -57,4 +57,35 @@ describe("ObserverMarker", () => {
     marker.setVisible(true);
     expect(marker.object3D.visible).toBe(true);
   });
+
+  it("computes occlusion relative to a moved Earth center, not the world origin (Center: Sun mode)", () => {
+    // Earth has moved to (100, 0, 0) - see EarthBase.setOrbitPosition. A
+    // marker "north pole"-equivalent relative to that new center sits at
+    // (100, 5, 0), NOT (0, 5, 0). Without getEarthCenter, normalize(pos)
+    // would treat (100, 5, 0) as nearly pointing along +X (Earth's now-
+    // distant world position), producing nonsense occlusion - this is the
+    // bug this test guards against.
+    const earthCenter = new THREE.Vector3(100, 0, 0);
+    const markerPosition = new THREE.Vector3(100, 5, 0);
+    const marker = new ObserverMarker("test", "Test", () => markerPosition, {
+      getEarthCenter: () => earthCenter,
+    });
+    // Camera also above Earth's new center, same (near) side.
+    marker.setCameraPositionGetter(() => new THREE.Vector3(100, 20, 20));
+    marker.update();
+    expect((marker.object3D.material as THREE.ShaderMaterial).fragmentShader).toBe(PIN_FRAGMENT_SHADER);
+
+    // Camera on the opposite side of Earth's new center - should occlude.
+    marker.setCameraPositionGetter(() => new THREE.Vector3(100, -20, 0));
+    marker.update();
+    expect((marker.object3D.material as THREE.ShaderMaterial).fragmentShader).toBe(CHEVRON_FRAGMENT_SHADER);
+  });
+
+  it("defaults getEarthCenter to the origin when not provided - matches every pre-existing call site", () => {
+    const markerPosition = new THREE.Vector3(0, 5, 0);
+    const marker = new ObserverMarker("test", "Test", () => markerPosition);
+    marker.setCameraPositionGetter(() => new THREE.Vector3(0, -20, 0));
+    marker.update();
+    expect((marker.object3D.material as THREE.ShaderMaterial).fragmentShader).toBe(CHEVRON_FRAGMENT_SHADER);
+  });
 });

@@ -28,11 +28,20 @@ export interface CelestialMarkerOptions {
    *  direction, so this fraction applies identically either way. */
   orbitRadiusFraction?: number;
   /** Optional image (served from public/, e.g. "/textures/moon1.png") mapped
-   *  onto the marker sphere instead of a flat color. There's no Sun-as-light
-   *  source in this scene yet, so this stays an unlit MeshBasicMaterial map
-   *  rather than real Sun-relative shading - a textured but phase-less body,
-   *  same as the flat-color markers it replaces. */
+   *  onto the marker sphere instead of a flat color. */
   textureUrl?: string;
+  /** Default false (unlit `MeshBasicMaterial`, correct for a self-luminous
+   *  body like the Sun - it shouldn't visibly darken depending on view
+   *  angle). Set true for a body that should be genuinely SHADED by the
+   *  scene's real keyLight (main.ts) instead - e.g. the Moon, whose real
+   *  phases are exactly this: the same sphere, lit from one real direction,
+   *  read from a changing angle. Uses `MeshStandardMaterial` (roughness 1,
+   *  metalness 0 - matching EarthBase's own material) so it responds to
+   *  the SAME ambient+directional lights already lighting Earth - no new
+   *  light source needed, `THREE.DirectionalLight` has no falloff/range,
+   *  so it lights every object in the scene identically regardless of
+   *  where that object is parented or how far from Earth it sits. */
+  lit?: boolean;
   /** How the marker's own mesh is oriented as it orbits, independent of the
    *  body's ORBITAL direction (which update() always computes correctly
    *  regardless of this setting). Default "still" - the mesh never rotates,
@@ -100,7 +109,10 @@ export class CelestialMarkerLayer implements Layer {
 
     const markerSize = options.radius * CELESTIAL_MARKER_SIZE_RATIO;
     const geometry = new THREE.SphereGeometry(markerSize, 16, 12);
-    const material = new THREE.MeshBasicMaterial({ color: options.textureUrl ? 0xffffff : options.color });
+    const color = options.textureUrl ? 0xffffff : options.color;
+    const material = options.lit
+      ? new THREE.MeshStandardMaterial({ color, roughness: 1, metalness: 0 })
+      : new THREE.MeshBasicMaterial({ color });
     if (options.textureUrl) {
       const texture = new THREE.TextureLoader().load(options.textureUrl);
       texture.colorSpace = THREE.SRGBColorSpace;

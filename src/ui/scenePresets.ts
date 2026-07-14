@@ -44,6 +44,11 @@ for (const modelId of MODEL_IDS) {
   ALL_LAYERS_OFF[`${modelId}SunMarkerGlobe`] = false;
   ALL_LAYERS_OFF[`${modelId}MoonMarkerGlobe`] = false;
   ALL_LAYERS_OFF[`${modelId}OrbitLines`] = false;
+  // The Solar System diagram (Sun-centered, Earth/Moon actually orbiting -
+  // see main.ts's buildSolarSystemDiagram) - a third per-model diagram tier,
+  // easy to forget here (see NOTES.md's ALL_LAYERS_OFF warning).
+  ALL_LAYERS_OFF[`${modelId}SolarSystemBodies`] = false;
+  ALL_LAYERS_OFF[`${modelId}SolarSystemEarthPath`] = false;
 }
 
 export const SCENE_PRESETS: ScenePreset[] = [

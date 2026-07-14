@@ -30,7 +30,10 @@ export class OrbitCameraRig implements CameraRig {
   controls: OrbitControls;
   private readonly domElement: HTMLElement;
   private readonly minDistance: number;
-  private readonly maxDistance: number;
+  // NOT readonly - see setMaxDistance(), which lets "Center: Sun" mode's
+  // Earth-Sun distance slider (main.ts) keep the zoom-out range in sync as
+  // the orbit itself grows/shrinks, without needing a full controls rebuild.
+  private maxDistance: number;
   private upMode: CameraUpMode = CameraUpMode.Equatorial;
 
   constructor(options: OrbitCameraRigOptions) {
@@ -80,6 +83,17 @@ export class OrbitCameraRig implements CameraRig {
 
   getUpMode(): CameraUpMode {
     return this.upMode;
+  }
+
+  /** Live zoom-out range change - unlike setUpMode, OrbitControls reads
+   *  `maxDistance` fresh each update() call (no cached quaternion issue),
+   *  so mutating the live controls instance directly is enough - no
+   *  dispose/rebuild needed. Also updates the stored field so a LATER
+   *  setUpMode rebuild (which reads `this.maxDistance` in createControls())
+   *  doesn't silently revert to the original constructor value. */
+  setMaxDistance(distance: number): void {
+    this.maxDistance = distance;
+    this.controls.maxDistance = distance;
   }
 
   setActive(active: boolean): void {

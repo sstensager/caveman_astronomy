@@ -82,6 +82,12 @@ export interface ObserverMarkerOptions {
   color?: number;
   fragmentShader?: string;
   occludedFragmentShader?: string;
+  /** Earth's current world-space center, for the self-occlusion check below
+   *  - defaults to a fixed origin getter, matching the assumption every
+   *  caller relied on before "Center: Sun" mode existed (see
+   *  RenderCenter.ts). Callers that might render while Earth has moved
+   *  (main.ts's createObserverEntry) must pass the live getter instead. */
+  getEarthCenter?: () => THREE.Vector3;
 }
 
 /**
@@ -111,14 +117,19 @@ export class ObserverMarker implements Layer {
 
   private readonly geometry: THREE.BufferGeometry;
   private readonly getWorldPosition: () => THREE.Vector3;
+  private readonly getEarthCenter: () => THREE.Vector3;
   private readonly visibleMaterial: THREE.ShaderMaterial;
   private readonly occludedMaterial: THREE.ShaderMaterial;
   private getCameraPosition?: () => THREE.Vector3;
+  private userVisible = true;
+  private showFarSideIndicator = true;
+  private isOccluded = false;
 
   constructor(id: string, label: string, getWorldPosition: () => THREE.Vector3, options?: ObserverMarkerOptions) {
     this.id = id;
     this.label = label;
     this.getWorldPosition = getWorldPosition;
+    this.getEarthCenter = options?.getEarthCenter ?? (() => new THREE.Vector3(0, 0, 0));
 
     this.geometry = new THREE.BufferGeometry();
     this.geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(3), 3));
@@ -159,6 +170,17 @@ export class ObserverMarker implements Layer {
     this.getCameraPosition = getter;
   }
 
+  /** Controls what happens when this marker is occluded (see update()'s
+   *  self-occlusion check): true (default) swaps to the chevron shader as
+   *  before; false hides the marker entirely instead, for users who find
+   *  a screenful of far-side chevrons more distracting than useful - see
+   *  main.ts's observerFarSideIndicatorLayer, which fans a single control
+   *  panel checkbox out to every observer's marker via this setter. */
+  setFarSideIndicatorEnabled(enabled: boolean): void {
+    this.showFarSideIndicator = enabled;
+    this.applyVisibility();
+  }
+
   update(): void {
     const pos = this.getWorldPosition();
     const attr = this.geometry.getAttribute("position") as THREE.BufferAttribute;
@@ -166,20 +188,34 @@ export class ObserverMarker implements Layer {
     attr.needsUpdate = true;
 
     if (this.getCameraPosition) {
-      // Earth's center is always the world origin (see EarthBase) - the
-      // observer sits essentially ON Earth's surface, so normalize(pos) IS
-      // the outward surface normal at the marker's position. If that
-      // normal points away from the camera, the marker is on the sphere's
-      // far hemisphere - the same self-occlusion test used for back-face
-      // culling, applied to a single point rather than a mesh triangle.
+      // The observer sits essentially ON Earth's surface, so
+      // normalize(pos - earthCenter) IS the outward surface normal at the
+      // marker's position. If that normal points away from the camera, the
+      // marker is on the sphere's far hemisphere - the same self-occlusion
+      // test used for back-face culling, applied to a single point rather
+      // than a mesh triangle. earthCenter is NOT always the world origin -
+      // see getEarthCenter's doc comment ("Center: Sun" mode moves Earth).
       const toCamera = this.getCameraPosition().clone().sub(pos).normalize();
-      const surfaceNormal = pos.clone().normalize();
-      const occluded = surfaceNormal.dot(toCamera) < 0;
-      this.object3D.material = occluded ? this.occludedMaterial : this.visibleMaterial;
+      const surfaceNormal = pos.clone().sub(this.getEarthCenter()).normalize();
+      this.isOccluded = surfaceNormal.dot(toCamera) < 0;
+      this.object3D.material = this.isOccluded ? this.occludedMaterial : this.visibleMaterial;
     }
+    this.applyVisibility();
   }
 
   setVisible(visible: boolean): void {
-    this.object3D.visible = visible;
+    this.userVisible = visible;
+    this.applyVisibility();
+  }
+
+  /** Reconciles the two independent reasons this marker might be hidden -
+   *  the user's own layer-visibility choice (setVisible) and, separately,
+   *  "occluded with the far-side indicator turned off" (see
+   *  setFarSideIndicatorEnabled) - into the single object3D.visible flag
+   *  Three.js actually reads. Called from both setters plus update() (since
+   *  occlusion state can only change there), so whichever changes last wins
+   *  without either overwriting the other's intent. */
+  private applyVisibility(): void {
+    this.object3D.visible = this.userVisible && !(this.isOccluded && !this.showFarSideIndicator);
   }
 }

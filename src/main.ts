@@ -15,10 +15,13 @@ import { ConstellationLinesLayer } from "./layers/sky/ConstellationLinesLayer";
 import { ConstellationLabelsLayer } from "./layers/sky/ConstellationLabelsLayer";
 import { OrbitLineLayer } from "./layers/sky/OrbitLineLayer";
 import { SkyPathLineLayer } from "./layers/sky/SkyPathLineLayer";
+import { OrbitingBodyMarkerLayer } from "./layers/sky/OrbitingBodyMarkerLayer";
 import { ModernHeliocentricModel } from "./astronomy/models/ModernHeliocentricModel";
 import { GeocentricModel } from "./astronomy/models/GeocentricModel";
 import { AstronomyModelRegistry } from "./astronomy/AstronomyModelRegistry";
 import { BodyIds, type AstronomyModel } from "./astronomy/types";
+import { getEarthDiagramPosition, getMoonDiagramPosition, getMoonOffsetFromEarth, getSunOffsetFromEarth } from "./astronomy/solarSystemDiagram";
+import { eclipticToWorld } from "./astronomy/frames";
 import { STAR_CATALOG } from "./astronomy/starCatalog";
 import { RESOLVED_CONSTELLATION_CULTURES } from "./astronomy/constellationCatalog";
 import { GroundObserver } from "./observers/GroundObserver";
@@ -30,6 +33,7 @@ import { AltAzGridLayer } from "./observers/AltAzGridLayer";
 import { CameraManager } from "./cameras/CameraManager";
 import { CameraMode } from "./cameras/CameraMode";
 import { CameraUpMode } from "./cameras/CameraUpMode";
+import { RenderCenter } from "./cameras/RenderCenter";
 import { GroundMoveControls } from "./cameras/GroundMoveControls";
 import { ControlPanel, type ControlPanelConfig, type ViewModeDef } from "./ui/ControlPanel";
 import { SCENE_PRESETS } from "./ui/scenePresets";
@@ -41,6 +45,7 @@ import type { Layer } from "./layers/Layer";
 import {
   BACKGROUND_STARS_DEFAULT,
   CELESTIAL_GLOBE_RADIUS,
+  CELESTIAL_MARKER_SIZE_RATIO,
   CELESTIAL_SPHERE_RADIUS,
   CELESTIAL_SPHERE_RADIUS_MAX,
   CELESTIAL_SPHERE_RADIUS_MIN,
@@ -51,8 +56,40 @@ import {
   EARTH_RADIUS,
   DEFAULT_LONGITUDE_DEG,
   MOON_GLOBE_ORBIT_FRACTION,
+  CENTER_SUN_EARTH_DISTANCE_DEFAULT_RADII,
+  CENTER_SUN_EARTH_DISTANCE_MIN_RADII,
+  CENTER_SUN_EARTH_DISTANCE_MAX_RADII,
+  CENTER_SUN_MOON_DISTANCE_DEFAULT_RADII,
+  CENTER_SUN_MOON_DISTANCE_MIN_RADII,
+  CENTER_SUN_MOON_DISTANCE_MAX_RADII,
+  CENTER_SUN_SUN_SIZE_DEFAULT_RADII,
+  CENTER_SUN_SUN_SIZE_MIN_RADII,
+  CENTER_SUN_SUN_SIZE_MAX_RADII,
+  CENTER_SUN_MOON_SIZE_DEFAULT_RADII,
+  CENTER_SUN_MOON_SIZE_MIN_RADII,
+  CENTER_SUN_MOON_SIZE_MAX_RADII,
+  CENTER_EARTH_SUN_DISTANCE_DEFAULT_RADII,
+  CENTER_EARTH_SUN_DISTANCE_MIN_RADII,
+  CENTER_EARTH_SUN_DISTANCE_MAX_RADII,
+  CENTER_EARTH_MOON_DISTANCE_DEFAULT_RADII,
+  CENTER_EARTH_MOON_DISTANCE_MIN_RADII,
+  CENTER_EARTH_MOON_DISTANCE_MAX_RADII,
+  CENTER_EARTH_SUN_SIZE_DEFAULT_RADII,
+  CENTER_EARTH_SUN_SIZE_MIN_RADII,
+  CENTER_EARTH_SUN_SIZE_MAX_RADII,
+  CENTER_EARTH_MOON_SIZE_DEFAULT_RADII,
+  CENTER_EARTH_MOON_SIZE_MIN_RADII,
+  CENTER_EARTH_MOON_SIZE_MAX_RADII,
+  EARTH_CENTERED_SUN_MARKER_SIZE,
+  EARTH_CENTERED_MOON_MARKER_SIZE,
   OBSERVER_COLORS,
   OBSERVER_GRID_RADIUS,
+  REAL_MOON_MARKER_SIZE,
+  REAL_SUN_MARKER_SIZE,
+  SOLAR_SYSTEM_DIAGRAM_OFFSET,
+  SOLAR_SYSTEM_DIAGRAM_RADIUS,
+  SOLAR_SYSTEM_EARTH_ORBIT_SCALE,
+  SOLAR_SYSTEM_MOON_ORBIT_SCALE,
   STAR_LIMITING_MAGNITUDE_MAX,
   STAR_LIMITING_MAGNITUDE_MIN,
   SUN_GLOBE_ORBIT_FRACTION,
@@ -88,10 +125,17 @@ scene.background = new THREE.Color(COLORS.background);
 // Ambient kept low (not zero) so the night side reads as unlit rather than
 // pure black - the terminator itself comes entirely from keyLight, whose
 // position is re-derived every frame from the active model's actual Sun
-// direction (see the render loop below), not fixed here.
-scene.add(new THREE.AmbientLight(0xffffff, 0.25));
+// direction (see the render loop below), not fixed here. keyLight itself
+// isn't added to the scene until earthBase exists further down - see the
+// comment there for why it's parented under earthBase.object3D rather than
+// scene directly. Lowered from 0.25 - the night side used to read as a flat
+// mid-gray no matter what, which undersold both Earth's own real day/night
+// contrast and the new Moon-phase shading (a lit Moon whose "dark" side is
+// still 25% bright barely reads as a phase at all). Still not zero - a
+// LITTLE ambient fill keeps the unlit hemisphere findable rather than
+// pure black, useful for locating things in Ground View at night.
+scene.add(new THREE.AmbientLight(0xffffff, 0.06));
 const keyLight = new THREE.DirectionalLight(0xffffff, 1.0);
-scene.add(keyLight);
 
 // --- Simulation clock -----------------------------------------------------
 
@@ -155,14 +199,23 @@ const axis = new AxisLayer(earthBase.rotationGroup);
 // model's diagram to a fixed model instead of getActiveModel.
 const observerRegistry = new ObserverRegistry();
 let observerMarkersVisible = true;
+// Whether an occluded (far-side) marker draws the chevron indicator at all,
+// vs. staying hidden until it rotates back into view - see
+// ObserverMarker.setFarSideIndicatorEnabled and observerFarSideIndicatorLayer
+// below. Independent of observerMarkersVisible, which hides markers outright.
+let observerFarSideIndicatorEnabled = true;
 let nextObserverNumber = 1;
 
 function createObserverEntry(id: string, label: string, latDeg: number, lonDeg: number, colorIndex: number): ObserverEntry {
   const station = new ObserverStation(earthBase.rotationGroup, { id, label, latDeg, lonDeg });
   const observer = new GroundObserver(id, station.object3D);
   const color = OBSERVER_COLORS[colorIndex % OBSERVER_COLORS.length];
-  const marker = new ObserverMarker(id, label, () => observer.getFrame().worldPosition, { color });
+  const marker = new ObserverMarker(id, label, () => observer.getFrame().worldPosition, {
+    color,
+    getEarthCenter: () => earthBase.object3D.getWorldPosition(new THREE.Vector3()),
+  });
   marker.setVisible(observerMarkersVisible);
+  marker.setFarSideIndicatorEnabled(observerFarSideIndicatorEnabled);
   scene.add(marker.object3D);
 
   const zenithSky = new ZenithLayer({
@@ -304,6 +357,7 @@ const moonMarkerSky = new CelestialMarkerLayer(BodyIds.Moon, () => groundModel, 
   observerCentered: true,
   textureUrl: "/textures/moon1.png",
   spinMode: "tidalLocked",
+  lit: true,
 });
 
 // The path each body traces across the immersive sky over one full orbital
@@ -366,6 +420,7 @@ function buildModelDiagram(modelId: string, modelLabel: string, model: Astronomy
     orbitRadiusFraction: MOON_GLOBE_ORBIT_FRACTION,
     textureUrl: "/textures/moon1.png",
     spinMode: "tidalLocked",
+    lit: true,
   });
   const sunOrbitLine = new OrbitLineLayer({
     id: `${modelId}SunOrbitLine`,
@@ -407,6 +462,218 @@ function buildModelDiagram(modelId: string, modelLabel: string, model: Astronomy
 
 const modelDiagrams = modelRegistry.all().map((entry) => buildModelDiagram(entry.id, entry.label, entry.model));
 
+/**
+ * A THIRD, separate display tier (alongside "sky" and "globe") showing TRUE
+ * model-space relative motion: the Sun fixed at this diagram's own center,
+ * Earth actually orbiting it in its real eccentric-ellipse shape, the Moon
+ * looping around Earth's current (moving) position - unlike buildModelDiagram
+ * above, whose Sun/Moon markers stay Earth-centered (Earth never moves
+ * there; only apparent direction from Earth is shown). Lives in its own
+ * offset THREE.Group (SOLAR_SYSTEM_DIAGRAM_OFFSET) so its Sun-at-center
+ * marker doesn't collide with the real EarthBase mesh or the origin-centered
+ * globe diagram, both permanently at the world origin.
+ *
+ * Every position here is computed the SAME way OrbitLineLayer's ellipses
+ * already are - eclipticToWorld(subVectors(bodyPos, referenceBodyPos)),
+ * scaled - never a bespoke shortcut. Earth's position is Earth-relative-to-
+ * Sun, which is exactly the negation of the Sun-relative-to-Earth vector
+ * that's already proven model-agnostic (see modelEquivalence.test.ts and
+ * GeocentricModel's doc comment on the mirror trick) - so Earth's diagram
+ * position is provably identical whichever model computes it. The Moon's
+ * position composes two such proven-model-agnostic relative vectors
+ * (Earth-from-Sun, then Moon-from-Earth), so the composition is too.
+ *
+ * Built once per registered model (like buildModelDiagram), all sharing the
+ * SAME world offset - since the underlying math is model-agnostic, both
+ * models' diagrams are meant to exactly coincide when shown together, same
+ * as the existing globe-tier diagrams already do.
+ */
+function buildSolarSystemDiagram(modelId: string, modelLabel: string, model: AstronomyModel) {
+  const group = new THREE.Group();
+  group.name = `SolarSystemDiagram.${modelId}`;
+  group.position.set(SOLAR_SYSTEM_DIAGRAM_OFFSET.x, SOLAR_SYSTEM_DIAGRAM_OFFSET.y, SOLAR_SYSTEM_DIAGRAM_OFFSET.z);
+
+  // Shared scale constants (config/constants.ts) - also used by the
+  // "Center: Sun" render mode below, so both stay in sync by construction.
+  const earthOrbitScale = SOLAR_SYSTEM_EARTH_ORBIT_SCALE;
+  const moonOrbitScale = SOLAR_SYSTEM_MOON_ORBIT_SCALE;
+
+  const sunMarker = new OrbitingBodyMarkerLayer({
+    id: `${modelId}SolarSystemSun`,
+    label: `${modelLabel} Solar System Sun`,
+    group: "Sky.Geometry",
+    color: COLORS.sun,
+    markerSize: SOLAR_SYSTEM_DIAGRAM_RADIUS * CELESTIAL_MARKER_SIZE_RATIO * 3,
+    getPosition: () => ({ x: 0, y: 0, z: 0 }),
+  });
+  const earthMarker = new OrbitingBodyMarkerLayer({
+    id: `${modelId}SolarSystemEarth`,
+    label: `${modelLabel} Solar System Earth`,
+    group: "Sky.Geometry",
+    color: COLORS.earth,
+    markerSize: SOLAR_SYSTEM_DIAGRAM_RADIUS * CELESTIAL_MARKER_SIZE_RATIO * 1.5,
+    textureUrl: "/textures/earth1.png",
+    getPosition: () => getEarthDiagramPosition(model.getState(getSimulationTime()), earthOrbitScale),
+  });
+  const moonMarker = new OrbitingBodyMarkerLayer({
+    id: `${modelId}SolarSystemMoon`,
+    label: `${modelLabel} Solar System Moon`,
+    group: "Sky.Geometry",
+    color: COLORS.moon,
+    markerSize: SOLAR_SYSTEM_DIAGRAM_RADIUS * CELESTIAL_MARKER_SIZE_RATIO * 0.7,
+    textureUrl: "/textures/moon1.png",
+    getPosition: () => getMoonDiagramPosition(model.getState(getSimulationTime()), earthOrbitScale, moonOrbitScale),
+  });
+  const bodies = new CompositeLayer(`${modelId}SolarSystemBodies`, `${modelLabel} Solar System Bodies`, "Sky.Geometry", [
+    sunMarker,
+    earthMarker,
+    moonMarker,
+  ]);
+
+  const earthOrbitLine = new OrbitLineLayer({
+    id: `${modelId}SolarSystemEarthPath`,
+    label: `${modelLabel} Earth's Orbital Path`,
+    group: "Sky.Geometry",
+    bodyId: BodyIds.Earth,
+    relativeToId: BodyIds.Sun,
+    periodDays: EARTH_ORBIT_PERIOD_DAYS,
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: () => model,
+    getSimulationTime,
+    radius: SOLAR_SYSTEM_DIAGRAM_RADIUS,
+    orbitRadiusFraction: SUN_GLOBE_ORBIT_FRACTION,
+    color: COLORS.earth,
+  });
+
+  group.add(sunMarker.object3D, earthMarker.object3D, moonMarker.object3D, earthOrbitLine.object3D);
+
+  return { modelId, modelLabel, group, sunMarker, earthMarker, moonMarker, bodies, earthOrbitLine };
+}
+
+const solarSystemDiagrams = modelRegistry.all().map((entry) => buildSolarSystemDiagram(entry.id, entry.label, entry.model));
+
+// "Center: Sun Scale" sliders (Camera panel section) - live, independently
+// adjustable distance knobs for this mode only, decoupled from the Solar
+// System side-diagram's own fixed scale (see config/constants.ts's doc
+// comment on CENTER_SUN_EARTH_DISTANCE_DEFAULT_RADII for why). The render
+// loop below reads these fresh every frame; marker SIZE changes instead
+// call OrbitingBodyMarkerLayer.setMarkerSize() directly from the slider's
+// onChange (no per-frame read needed - size doesn't animate on its own).
+// Declared HERE (before realMoonMarker below), not near the sliders'
+// panelConfig wiring further down - OrbitingBodyMarkerLayer's constructor
+// calls getPosition() immediately (via recompute()), so a `let` declared
+// later in the file would throw a temporal-dead-zone ReferenceError the
+// instant the page loads, not just whenever the slider first moves.
+let centerSunEarthDistanceRadii = CENTER_SUN_EARTH_DISTANCE_DEFAULT_RADII;
+let centerSunMoonDistanceRadii = CENTER_SUN_MOON_DISTANCE_DEFAULT_RADII;
+
+// Master switch for THIS mode's real Sun+Moon pair (realSunMarker/
+// realMoonMarker below) - OFF by default, so loading straight into (or
+// switching to) Center:Sun doesn't immediately drop a body next to Earth
+// unasked. Combined with `renderCenter` in applyRealBodyVisibility (defined
+// near switchRenderCenter) - only actually shown when BOTH this is checked
+// AND this mode is the active one. Declared here (not near the checkbox's
+// panelConfig wiring) for the same TDZ reason as the distance vars above.
+let sunCenteredBodiesVisible = false;
+
+// The real Sun, fixed at the world origin - only meaningful/visible in
+// "Center: Sun" mode (see RenderCenter.ts), and even then only when
+// sunCenteredBodiesVisible above is checked (see applyRealBodyVisibility) -
+// not registered in `layers`/LayerRegistry (its checkbox lives in this
+// mode's own Scale panel instead, alongside the distance/size sliders it's
+// most relevant next to) and never needs update() since its position never
+// changes - only setVisible() is ever called on it, from
+// applyRealBodyVisibility.
+const realSunMarker = new OrbitingBodyMarkerLayer({
+  id: "realSunMarker",
+  label: "The Sun",
+  group: "Sky.Geometry",
+  color: COLORS.sun,
+  markerSize: REAL_SUN_MARKER_SIZE,
+  getPosition: () => ({ x: 0, y: 0, z: 0 }),
+});
+realSunMarker.setVisible(false);
+scene.add(realSunMarker.object3D);
+
+// The real Moon, orbiting close to Earth's own (now-moved) position - same
+// visibility rule as realSunMarker above, but parented under
+// earthBase.object3D (NOT scene) so its LOCAL position only needs the
+// Earth-relative offset (getMoonOffsetFromEarth), not Earth's own absolute
+// position too - the parent transform already supplies that, exactly like
+// the reparented globe-tier diagram elsewhere in this file. DOES need
+// update() every frame (the Moon actually orbits, unlike the fixed Sun) -
+// called explicitly from the render loop's Center:Sun branch below, not
+// registered in `layers`, for the same reason realSunMarker isn't.
+const realMoonMarker = new OrbitingBodyMarkerLayer({
+  id: "realMoonMarker",
+  label: "The Moon",
+  group: "Sky.Geometry",
+  color: COLORS.moon,
+  markerSize: REAL_MOON_MARKER_SIZE,
+  textureUrl: "/textures/moon1.png",
+  lit: true,
+  // Reads the LIVE, slider-adjustable distance (declared just above) each
+  // time this is called, not the side-diagram's fixed
+  // SOLAR_SYSTEM_MOON_ORBIT_SCALE - see that constant's doc comment.
+  getPosition: () =>
+    getMoonOffsetFromEarth(groundModel.getState(getSimulationTime()), (EARTH_RADIUS * centerSunMoonDistanceRadii) / MOON_ORBIT_RADIUS),
+});
+realMoonMarker.setVisible(false);
+earthBase.object3D.add(realMoonMarker.object3D);
+
+// "Center: Earth" mode's own scale state - the mirror image of the two
+// above. Same TDZ reasoning: must be declared before
+// earthCenteredSunMarker/earthCenteredMoonMarker's construction, not near
+// their sliders' panelConfig wiring.
+let centerEarthSunDistanceRadii = CENTER_EARTH_SUN_DISTANCE_DEFAULT_RADII;
+let centerEarthMoonDistanceRadii = CENTER_EARTH_MOON_DISTANCE_DEFAULT_RADII;
+
+// Mirror image of sunCenteredBodiesVisible above, for this mode's own
+// Sun+Moon pair - also OFF by default. Earth mode being the app's DEFAULT
+// active mode is exactly why this matters most here: without this, the
+// Earth-centered Moon marker used to render right next to Earth on first
+// load, before the user asked for it.
+let earthCenteredBodiesVisible = false;
+
+// "Center: Earth" mode's own real Sun, truly orbiting the fixed Earth with
+// real elliptical distance - unlike the existing globe/sky-tier Sun
+// markers (sunMarkerGlobe/sunMarkerSky), which are direction-only at a
+// fixed fraction-of-radius distance. Only visible in Center:Earth mode AND
+// when earthCenteredBodiesVisible is checked (see applyRealBodyVisibility) -
+// the mirror image of realSunMarker, but THIS Sun moves (Earth stays
+// fixed) so it DOES need per-frame update(), called from the render
+// loop's new Center:Earth branch below. Parented under earthBase.object3D
+// for consistency with realMoonMarker even though Earth never moves in
+// this mode (so local == world here).
+const earthCenteredSunMarker = new OrbitingBodyMarkerLayer({
+  id: "earthCenteredSunMarker",
+  label: "The Sun (Earth-centered)",
+  group: "Sky.Geometry",
+  color: COLORS.sun,
+  markerSize: EARTH_CENTERED_SUN_MARKER_SIZE,
+  getPosition: () =>
+    getSunOffsetFromEarth(groundModel.getState(getSimulationTime()), (EARTH_RADIUS * centerEarthSunDistanceRadii) / EARTH_ORBIT_RADIUS),
+});
+earthCenteredSunMarker.setVisible(false);
+earthBase.object3D.add(earthCenteredSunMarker.object3D);
+
+// "Center: Earth" mode's own real Moon - same real-distance treatment,
+// fully independent scale from realMoonMarker's (Center:Sun mode's) own
+// Moon distance/size, per this session's established decoupling pattern.
+const earthCenteredMoonMarker = new OrbitingBodyMarkerLayer({
+  id: "earthCenteredMoonMarker",
+  label: "The Moon (Earth-centered)",
+  group: "Sky.Geometry",
+  color: COLORS.moon,
+  markerSize: EARTH_CENTERED_MOON_MARKER_SIZE,
+  textureUrl: "/textures/moon1.png",
+  lit: true,
+  getPosition: () =>
+    getMoonOffsetFromEarth(groundModel.getState(getSimulationTime()), (EARTH_RADIUS * centerEarthMoonDistanceRadii) / MOON_ORBIT_RADIUS),
+});
+earthCenteredMoonMarker.setVisible(false);
+earthBase.object3D.add(earthCenteredMoonMarker.object3D);
+
 // Synthetic Layer (no object3D of its own - see Layer.object3D being
 // optional) fanning "Show Observer Markers" out to every registered
 // observer's marker, including ones added later via "Add Observer".
@@ -420,6 +687,19 @@ const observerMarkersLayer: Layer = {
   },
   update: () => {
     observerRegistry.all().forEach((entry) => entry.marker.update?.());
+  },
+};
+
+// Same fan-out pattern as observerMarkersLayer above, but for the far-side
+// chevron indicator rather than marker visibility itself - see
+// ObserverMarker.setFarSideIndicatorEnabled's doc comment.
+const observerFarSideIndicatorLayer: Layer = {
+  id: "observerFarSideIndicator",
+  label: "Show Far-Side Indicator (chevron)",
+  group: "Earth.Teaching",
+  setVisible: (visible: boolean) => {
+    observerFarSideIndicatorEnabled = visible;
+    observerRegistry.all().forEach((entry) => entry.marker.setFarSideIndicatorEnabled(visible));
   },
 };
 
@@ -443,20 +723,55 @@ for (const diagram of modelDiagrams) {
   layers.register(diagram.sunOrbitLine);
   layers.register(diagram.moonOrbitLine);
 }
+for (const diagram of solarSystemDiagrams) {
+  layers.register(diagram.bodies);
+  layers.register(diagram.sunMarker);
+  layers.register(diagram.earthMarker);
+  layers.register(diagram.moonMarker);
+  layers.register(diagram.earthOrbitLine);
+}
 layers.register(celestialSphereShell);
 layers.register(observerMarkersLayer);
+layers.register(observerFarSideIndicatorLayer);
 
 scene.add(earthBase.object3D);
-scene.add(backgroundStars.object3D, celestialSphereStars.object3D);
-scene.add(constellationLinesSky.object3D, constellationLinesGlobe.object3D);
-scene.add(constellationNamesSky.object3D, constellationNamesGlobe.object3D);
+scene.add(backgroundStars.object3D);
+scene.add(constellationLinesSky.object3D);
+scene.add(constellationNamesSky.object3D);
 scene.add(sunMarkerSky.object3D, moonMarkerSky.object3D);
 scene.add(sunEclipticPath.object3D, moonSkyPath.object3D);
-for (const diagram of modelDiagrams) {
-  scene.add(diagram.sunMarkerGlobe.object3D, diagram.moonMarkerGlobe.object3D);
-  scene.add(diagram.sunOrbitLine.object3D, diagram.moonOrbitLine.object3D);
+for (const diagram of solarSystemDiagrams) {
+  scene.add(diagram.group);
 }
-scene.add(celestialSphereShell.object3D);
+// Everything below is the Earth-CENTERED "explanatory globe" tier (small
+// diagram wrapped snugly around Earth - see README's "Dual-tier display")
+// - parented under earthBase.object3D (the orbitGroup), NOT scene, so it
+// moves rigidly with Earth in "Center: Sun" mode instead of staying behind
+// at the old origin. Their own position math (CelestialMarkerLayer with
+// observerCentered:false, OrbitLineLayer's Earth-relative ellipses) was
+// always implicitly Earth-relative - this just makes that relationship a
+// real parent transform instead of a coincidence of Earth sitting at the
+// origin. See RenderCenter.ts / EarthBase.setOrbitPosition.
+earthBase.object3D.add(celestialSphereStars.object3D);
+earthBase.object3D.add(constellationLinesGlobe.object3D);
+earthBase.object3D.add(constellationNamesGlobe.object3D);
+for (const diagram of modelDiagrams) {
+  earthBase.object3D.add(diagram.sunMarkerGlobe.object3D, diagram.moonMarkerGlobe.object3D);
+  earthBase.object3D.add(diagram.sunOrbitLine.object3D, diagram.moonOrbitLine.object3D);
+}
+earthBase.object3D.add(celestialSphereShell.object3D);
+
+// keyLight (declared near the top of this file, not yet added anywhere) and
+// its target are parented under earthBase.object3D too, for the same reason
+// as the globe-tier diagram above: the per-frame position formula in the
+// render loop below (sunLightDirection * EARTH_RADIUS*20) was always
+// implicitly "relative to wherever Earth's center is" - reparenting makes
+// that real instead of assumed. keyLight.target defaults to local (0,0,0),
+// which is exactly Earth's own mesh center regardless of spin/tilt (both
+// pure rotations, not translations) - it never needs to be touched again.
+// Without this, the terminator would stay aimed at the old origin once
+// "Center: Sun" moves Earth away from it.
+earthBase.object3D.add(keyLight, keyLight.target);
 
 const selectedStarMarker = new SelectedStarMarker();
 scene.add(selectedStarMarker.object3D);
@@ -471,8 +786,15 @@ const defaultLayerVisibility: Record<string, boolean> = {
   constellationLinesGlobe: false,
   constellationNamesSky: false,
   constellationNamesGlobe: false,
-  sunMarkerSky: true,
-  moonMarkerSky: true,
+  // Default OFF now (was on) - Center:Earth mode's own earthCenteredSunMarker/
+  // earthCenteredMoonMarker (visible by default, since Center:Earth is the
+  // default mode - see switchRenderCenter) are the new default "relevant
+  // bodies" and would otherwise clutter the view alongside these
+  // direction-only, fixed-distance approximations right out of the box.
+  // Still fully manually toggleable - see switchRenderCenter's doc comment
+  // for why this is deliberate auto-linking, not permanent removal.
+  sunMarkerSky: false,
+  moonMarkerSky: false,
   sunEclipticPath: false,
   moonSkyPath: false,
   celestialSphereShell: false,
@@ -485,6 +807,11 @@ for (const diagram of modelDiagrams) {
   defaultLayerVisibility[diagram.sunMarkerGlobe.id] = false;
   defaultLayerVisibility[diagram.moonMarkerGlobe.id] = false;
   defaultLayerVisibility[diagram.orbitLines.id] = false;
+}
+// Same "neither model favored, start off" reasoning as modelDiagrams above.
+for (const diagram of solarSystemDiagrams) {
+  defaultLayerVisibility[diagram.bodies.id] = false;
+  defaultLayerVisibility[diagram.earthOrbitLine.id] = false;
 }
 layers.show(defaultLayerVisibility);
 
@@ -611,7 +938,73 @@ function switchCameraUpMode(mode: CameraUpMode): void {
   controlPanel.setActiveUpMode(mode);
 }
 
+// Which body sits fixed at the world origin - see RenderCenter.ts. Fully
+// orthogonal to CameraMode/AstronomyModel (see the class doc comment) -
+// deliberately NOT forcing a camera-mode switch here, since Ground View
+// keeps working correctly unmodified when Earth moves (its camera is
+// parented under the active ObserverStation, which rides along - see
+// GroundCameraRig.syncParent). The actual per-frame position update lives
+// in the render loop below.
+let renderCenter: RenderCenter = RenderCenter.Earth;
+
+/** Each Center mode's own real Sun+Moon pair is only actually shown when
+ *  BOTH conditions hold: that mode is the active one AND its own
+ *  bodiesVisible checkbox (sunCenteredBodiesVisible/earthCenteredBodiesVisible
+ *  above) is checked. The checkbox alone can't show a body while the OTHER
+ *  mode's tab is active, and switching tabs alone can't show a body the
+ *  user hasn't asked for - both a mode switch (switchRenderCenter) and a
+ *  checkbox change (see panelConfig.sunAndMoon.realDistance.earth/sun.bodiesVisible)
+ *  call this to re-resolve the combined state. */
+function applyRealBodyVisibility(): void {
+  realSunMarker.setVisible(renderCenter === RenderCenter.Sun && sunCenteredBodiesVisible);
+  realMoonMarker.setVisible(renderCenter === RenderCenter.Sun && sunCenteredBodiesVisible);
+  earthCenteredSunMarker.setVisible(renderCenter === RenderCenter.Earth && earthCenteredBodiesVisible);
+  earthCenteredMoonMarker.setVisible(renderCenter === RenderCenter.Earth && earthCenteredBodiesVisible);
+}
+
+/** Switching Center mode also auto-hides the OLDER, direction-only/fixed-
+ *  distance Sun & Moon approximations (sky-tier sunMarkerSky/moonMarkerSky,
+ *  and every model's globe-tier sunMarkerGlobe/moonMarkerGlobe) - both
+ *  Center modes now have their own true-position replacement (realSunMarker/
+ *  realMoonMarker for Sun mode, earthCenteredSunMarker/earthCenteredMoonMarker
+ *  for Earth mode), so the old ones are just redundant clutter stacked on
+ *  top of the new ones, in EITHER mode. This is deliberate auto-LINKING
+ *  triggered by an explicit user action (clicking a tab), not silent
+ *  gating - every checkbox this touches stays fully manually re-toggleable
+ *  afterward (layers.show + controlPanel.syncLayerToggles is the exact
+ *  same pattern scene presets already use for "apply a state, but the
+ *  user can still override it by hand"). Deliberately does NOT touch the
+ *  Solar System side-diagram (`${modelId}SolarSystemBodies`) - that's a
+ *  separate, still fully independent teaching diagram, unrelated to which
+ *  body Center mode currently fixes at the origin. */
+function switchRenderCenter(mode: RenderCenter): void {
+  renderCenter = mode;
+  applyRealBodyVisibility();
+  controlPanel.setActiveRenderCenter(mode);
+
+  const supersededMarkerVisibility: Record<string, boolean> = {
+    sunMarkerSky: false,
+    moonMarkerSky: false,
+  };
+  for (const diagram of modelDiagrams) {
+    supersededMarkerVisibility[diagram.sunMarkerGlobe.id] = false;
+    supersededMarkerVisibility[diagram.moonMarkerGlobe.id] = false;
+  }
+  layers.show(supersededMarkerVisibility);
+  controlPanel.syncLayerToggles(supersededMarkerVisibility);
+}
+
 const panelConfig: ControlPanelConfig = {
+  view: {
+    renderCenter: {
+      entries: [
+        { id: RenderCenter.Earth, label: "Center: Earth" },
+        { id: RenderCenter.Sun, label: "Center: Sun" },
+      ],
+      activeId: RenderCenter.Earth,
+      onSwitchActive: switchRenderCenter,
+    },
+  },
   scene: {
     presets: SCENE_PRESETS.map((preset) => ({
       id: preset.id,
@@ -640,14 +1033,134 @@ const panelConfig: ControlPanelConfig = {
       onChange: (v) => earthBase.setAxialTilt(v),
     },
   },
-  astronomyModel: {
-    models: modelDiagrams.map((diagram) => ({
+  // The single home for every Sun/Moon representation in the app, tier-
+  // first (see ControlPanel.ts's SunAndMoonPanelConfig doc comment) -
+  // replaces the old separate `astronomyModel`/`sunMoon` keys and the top
+  // View tab strip's per-mode scale sliders. explanatoryGlobe/
+  // solarSystemDiagram are each their own independent .map() now (not
+  // zipped together by index like the old single `astronomyModel.models`
+  // was) - both still rely on modelDiagrams/solarSystemDiagrams being built
+  // from the same modelRegistry.all() call in the same order (see above)
+  // for their id/label to line up 1:1, even though nothing zips them
+  // together anymore.
+  sunAndMoon: {
+    sky: {
+      sun: { checked: true, onChange: (v) => layers.show({ sunMarkerSky: v }) },
+      moon: { checked: true, onChange: (v) => layers.show({ moonMarkerSky: v }) },
+      sunEclipticPath: { checked: false, onChange: (v) => layers.show({ sunEclipticPath: v }) },
+      moonSkyPath: { checked: false, onChange: (v) => layers.show({ moonSkyPath: v }) },
+    },
+    explanatoryGlobe: modelDiagrams.map((diagram) => ({
       id: diagram.modelId,
       label: diagram.modelLabel,
       sun: { checked: false, onChange: (v: boolean) => layers.show({ [diagram.sunMarkerGlobe.id]: v }) },
       moon: { checked: false, onChange: (v: boolean) => layers.show({ [diagram.moonMarkerGlobe.id]: v }) },
       orbitLines: { checked: false, onChange: (v: boolean) => layers.show({ [diagram.orbitLines.id]: v }) },
     })),
+    solarSystemDiagram: solarSystemDiagrams.map((solarSystem) => ({
+      id: solarSystem.modelId,
+      label: solarSystem.modelLabel,
+      bodies: { checked: false, onChange: (v: boolean) => layers.show({ [solarSystem.bodies.id]: v }) },
+      earthPath: { checked: false, onChange: (v: boolean) => layers.show({ [solarSystem.earthOrbitLine.id]: v }) },
+    })),
+    realDistance: {
+      earth: {
+        bodiesVisible: {
+          checked: earthCenteredBodiesVisible,
+          onChange: (v: boolean) => {
+            earthCenteredBodiesVisible = v;
+            applyRealBodyVisibility();
+          },
+        },
+        sunDistance: {
+          value: CENTER_EARTH_SUN_DISTANCE_DEFAULT_RADII,
+          min: CENTER_EARTH_SUN_DISTANCE_MIN_RADII,
+          max: CENTER_EARTH_SUN_DISTANCE_MAX_RADII,
+          step: 5,
+          format: (v: number) => `${v} R⊕`,
+          onChange: (v: number) => {
+            centerEarthSunDistanceRadii = v;
+            // Same zoom-range-keeps-pace reasoning as Center:Sun's own
+            // Earth-Sun distance slider below - here it's the Sun MARKER
+            // moving far from a fixed Earth instead, but the camera still
+            // needs to be able to zoom out far enough to see it.
+            cameraManager.setSpaceMaxDistance(Math.max(EARTH_RADIUS * 200, v * EARTH_RADIUS * 3));
+          },
+        },
+        moonDistance: {
+          value: CENTER_EARTH_MOON_DISTANCE_DEFAULT_RADII,
+          min: CENTER_EARTH_MOON_DISTANCE_MIN_RADII,
+          max: CENTER_EARTH_MOON_DISTANCE_MAX_RADII,
+          step: 0.1,
+          format: (v: number) => `${v.toFixed(1)} R⊕`,
+          onChange: (v: number) => (centerEarthMoonDistanceRadii = v),
+        },
+        sunSize: {
+          value: CENTER_EARTH_SUN_SIZE_DEFAULT_RADII,
+          min: CENTER_EARTH_SUN_SIZE_MIN_RADII,
+          max: CENTER_EARTH_SUN_SIZE_MAX_RADII,
+          step: 0.1,
+          format: (v: number) => `${v.toFixed(1)} R⊕`,
+          onChange: (v: number) => earthCenteredSunMarker.setMarkerSize(EARTH_RADIUS * v),
+        },
+        moonSize: {
+          value: CENTER_EARTH_MOON_SIZE_DEFAULT_RADII,
+          min: CENTER_EARTH_MOON_SIZE_MIN_RADII,
+          max: CENTER_EARTH_MOON_SIZE_MAX_RADII,
+          step: 0.05,
+          format: (v: number) => `${v.toFixed(2)} R⊕`,
+          onChange: (v: number) => earthCenteredMoonMarker.setMarkerSize(EARTH_RADIUS * v),
+        },
+      },
+      sun: {
+        bodiesVisible: {
+          checked: sunCenteredBodiesVisible,
+          onChange: (v: boolean) => {
+            sunCenteredBodiesVisible = v;
+            applyRealBodyVisibility();
+          },
+        },
+        sunDistance: {
+          value: CENTER_SUN_EARTH_DISTANCE_DEFAULT_RADII,
+          min: CENTER_SUN_EARTH_DISTANCE_MIN_RADII,
+          max: CENTER_SUN_EARTH_DISTANCE_MAX_RADII,
+          step: 5,
+          format: (v: number) => `${v} R⊕`,
+          onChange: (v: number) => {
+            centerSunEarthDistanceRadii = v;
+            // Keeps Space View's zoom-out range comfortably ahead of the
+            // orbit's actual size (3x margin) - never below the app's normal
+            // default, so shrinking this slider back down doesn't leave the
+            // zoom range stuck oddly small either.
+            cameraManager.setSpaceMaxDistance(Math.max(EARTH_RADIUS * 200, v * EARTH_RADIUS * 3));
+          },
+        },
+        moonDistance: {
+          value: CENTER_SUN_MOON_DISTANCE_DEFAULT_RADII,
+          min: CENTER_SUN_MOON_DISTANCE_MIN_RADII,
+          max: CENTER_SUN_MOON_DISTANCE_MAX_RADII,
+          step: 0.1,
+          format: (v: number) => `${v.toFixed(1)} R⊕`,
+          onChange: (v: number) => (centerSunMoonDistanceRadii = v),
+        },
+        sunSize: {
+          value: CENTER_SUN_SUN_SIZE_DEFAULT_RADII,
+          min: CENTER_SUN_SUN_SIZE_MIN_RADII,
+          max: CENTER_SUN_SUN_SIZE_MAX_RADII,
+          step: 0.1,
+          format: (v: number) => `${v.toFixed(1)} R⊕`,
+          onChange: (v: number) => realSunMarker.setMarkerSize(EARTH_RADIUS * v),
+        },
+        moonSize: {
+          value: CENTER_SUN_MOON_SIZE_DEFAULT_RADII,
+          min: CENTER_SUN_MOON_SIZE_MIN_RADII,
+          max: CENTER_SUN_MOON_SIZE_MAX_RADII,
+          step: 0.05,
+          format: (v: number) => `${v.toFixed(2)} R⊕`,
+          onChange: (v: number) => realMoonMarker.setMarkerSize(EARTH_RADIUS * v),
+        },
+      },
+    },
   },
   observer: {
     entries: observerRegistry.all().map((entry) => ({ id: entry.id, label: entry.label })),
@@ -658,6 +1171,10 @@ const panelConfig: ControlPanelConfig = {
     },
     onAddObserver: addObserver,
     markersVisible: { checked: observerMarkersVisible, onChange: (v) => layers.show({ observerMarkers: v }) },
+    farSideIndicatorVisible: {
+      checked: observerFarSideIndicatorEnabled,
+      onChange: (v) => layers.show({ observerFarSideIndicator: v }),
+    },
     // One row per observer, independently toggleable regardless of which is
     // "active" - see ObserverRegistry's doc comment and createObserverEntry.
     // Unlike Sun/Moon's globe-tier markers, Zenith/AltAzGrid are always
@@ -673,12 +1190,6 @@ const panelConfig: ControlPanelConfig = {
       zenith: { checked: false, onChange: (v: boolean) => layers.show({ [entry.zenith.id]: v }) },
       grid: { checked: false, onChange: (v: boolean) => layers.show({ [entry.altAzGrid.id]: v }) },
     })),
-  },
-  sunMoon: {
-    sun: { checked: true, onChange: (v) => layers.show({ sunMarkerSky: v }) },
-    moon: { checked: true, onChange: (v) => layers.show({ moonMarkerSky: v }) },
-    sunEclipticPath: { checked: false, onChange: (v) => layers.show({ sunEclipticPath: v }) },
-    moonSkyPath: { checked: false, onChange: (v) => layers.show({ moonSkyPath: v }) },
   },
   celestialSphere: {
     visible: { checked: false, onChange: (v) => layers.show({ celestialSphereShell: v }) },
@@ -723,6 +1234,14 @@ const panelConfig: ControlPanelConfig = {
         step: 0.05,
         onChange: (v) => backgroundStars.setOpacity(v),
       },
+      // Sky-tier constellations - see stars.celestialSphere's globe-tier
+      // pair below and ControlPanelConfig.stars' doc comment for why these
+      // live on the star config they're adjacent to rather than in a
+      // standalone section. Independent of star visibility itself
+      // (resolved once against the shared catalog at load, not derived
+      // from what's currently drawn - see constellationCatalog.ts).
+      constellationLines: { checked: false, onChange: (v) => layers.show({ constellationLinesSky: v }) },
+      constellationNames: { checked: false, onChange: (v) => layers.show({ constellationNamesSky: v }) },
     },
     celestialSphere: {
       visible: { checked: false, onChange: (v) => layers.show({ celestialSphereStars: v }) },
@@ -754,13 +1273,11 @@ const panelConfig: ControlPanelConfig = {
         step: 0.05,
         onChange: (v) => celestialSphereStars.setOpacity(v),
       },
+      // Globe-tier constellations - see stars.background's sky-tier pair
+      // above for the shared reasoning.
+      constellationLines: { checked: false, onChange: (v) => layers.show({ constellationLinesGlobe: v }) },
+      constellationNames: { checked: false, onChange: (v) => layers.show({ constellationNamesGlobe: v }) },
     },
-  },
-  constellations: {
-    linesSky: { checked: false, onChange: (v) => layers.show({ constellationLinesSky: v }) },
-    linesGlobe: { checked: false, onChange: (v) => layers.show({ constellationLinesGlobe: v }) },
-    namesSky: { checked: false, onChange: (v) => layers.show({ constellationNamesSky: v }) },
-    namesGlobe: { checked: false, onChange: (v) => layers.show({ constellationNamesGlobe: v }) },
   },
   camera: {
     viewModes,
@@ -825,23 +1342,79 @@ renderer.setAnimationLoop(() => {
   groundMoveControls.update(deltaSeconds);
   cameraManager.update();
 
+  const universeState = groundModel.getState(getSimulationTime());
+
+  // "Center: Sun" mode (see RenderCenter.ts): Earth's whole rig moves to its
+  // real position relative to the Sun each frame, reusing the exact same
+  // proven-model-agnostic function the Solar System side-diagram uses (see
+  // astronomy/solarSystemDiagram.ts) - so this is provably identical
+  // regardless of which model computed universeState. Reads the LIVE,
+  // slider-adjustable centerSunEarthDistanceRadii (Camera panel section),
+  // deliberately decoupled from the side-diagram's own fixed
+  // SOLAR_SYSTEM_EARTH_ORBIT_SCALE - see config/constants.ts's doc comment
+  // on CENTER_SUN_EARTH_DISTANCE_DEFAULT_RADII for why. "Center: Earth"
+  // resets it to the origin every frame too (not just once on toggle),
+  // which is cheap and keeps this branch the single source of truth for
+  // Earth's position rather than relying on it being left over from a
+  // previous mode.
+  earthBase.setOrbitPosition(
+    renderCenter === RenderCenter.Sun
+      ? getEarthDiagramPosition(universeState, (EARTH_RADIUS * centerSunEarthDistanceRadii) / EARTH_ORBIT_RADIUS)
+      : { x: 0, y: 0, z: 0 },
+  );
+  // realMoonMarker isn't registered in `layers` (see its own doc comment),
+  // so its per-frame update() is called explicitly here, only while it's
+  // actually visible - the Moon really does orbit Earth continuously in
+  // this mode, unlike the fixed realSunMarker.
+  if (renderCenter === RenderCenter.Sun) realMoonMarker.update();
+  // "Center: Earth" mode's mirror image: Earth stays fixed (handled by
+  // setOrbitPosition above), but its own Sun AND Moon markers both move,
+  // so both need per-frame update() here - unlike Center:Sun mode, where
+  // only the Moon moves and the Sun is fixed at the origin.
+  if (renderCenter === RenderCenter.Earth) {
+    earthCenteredSunMarker.update();
+    earthCenteredMoonMarker.update();
+  }
+
   // Real day/night terminator: the key light always comes from groundModel's
   // actual current Sun direction (see groundModel's own doc comment above -
-  // fixed, not switchable). Earth's mesh sits at the world origin regardless
-  // of model (see EarthBase), but the model's own coordinate origin does NOT
-  // always coincide with Earth - Heliocentric puts the Sun near origin and
-  // moves Earth, Geocentric does the opposite - so this must use the
-  // RELATIVE vector (Sun - Earth), exactly like GroundObserver.
-  // getDirectionTo, not either absolute position alone. DirectionalLight
-  // only cares about direction, not distance, but a position far outside
-  // Earth keeps the math the same shape as a real light source.
-  const universeState = groundModel.getState(getSimulationTime());
+  // fixed, not switchable). keyLight is parented under earthBase.object3D
+  // (see the reparenting comment near celestialSphereShell above), so this
+  // position is LOCAL to wherever Earth currently is - the model's own
+  // coordinate origin does NOT always coincide with Earth either way
+  // (Heliocentric puts the Sun near origin and moves Earth, Geocentric does
+  // the opposite) - so this must use the RELATIVE vector (Sun - Earth),
+  // exactly like GroundObserver.getDirectionTo, not either absolute position
+  // alone. DirectionalLight only cares about direction, not distance, but a
+  // position far outside Earth keeps the math the same shape as a real
+  // light source.
+  //
+  // eclipticToWorld is REQUIRED here, not optional - models express
+  // position in the ecliptic frame (Y = ecliptic pole), but Earth's real
+  // geography (continents, the night-lights texture) spins around the
+  // TILTED celestial-pole axis (world +Y, see EarthBase/frames.ts). Skipping
+  // this rotation was a pre-existing simplification (silently treating the
+  // two poles as the same axis, i.e. zero obliquity) that stayed invisible
+  // as long as the night side was just flat ambient-lit gray - once real
+  // night-lights geography made the terminator's exact position clearly
+  // scrutinizable, the up-to-23.44deg error became a visible "the lit/dark
+  // boundary doesn't line up with the continents" bug. Same fix
+  // GroundObserver.getDirectionTo/OrbitLineLayer/SkyPathLineLayer already
+  // apply to every other body-position consumer - this was the one place
+  // it had been missed.
   const sunBody = universeState.bodies[BodyIds.Sun];
   const earthBody = universeState.bodies[BodyIds.Earth];
-  sunLightDirection
-    .set(sunBody.position.x - earthBody.position.x, sunBody.position.y - earthBody.position.y, sunBody.position.z - earthBody.position.z)
-    .normalize();
+  const sunDirectionWorld = eclipticToWorld({
+    x: sunBody.position.x - earthBody.position.x,
+    y: sunBody.position.y - earthBody.position.y,
+    z: sunBody.position.z - earthBody.position.z,
+  });
+  sunLightDirection.set(sunDirectionWorld.x, sunDirectionWorld.y, sunDirectionWorld.z).normalize();
   keyLight.position.copy(sunLightDirection).multiplyScalar(EARTH_RADIUS * 20);
+  // Same direction keyLight itself just used - keeps the shader-blended
+  // night-lights terminator and keyLight's own PBR-lit terminator in
+  // perfect agreement (see ContinentsLayer's class doc comment).
+  continents.setSunDirection(sunLightDirection);
 
   const activeLatLon = observerRegistry.getActive().station.getLatLon();
   controlPanel.setObserverLatLon(activeLatLon.latDeg, activeLatLon.lonDeg);

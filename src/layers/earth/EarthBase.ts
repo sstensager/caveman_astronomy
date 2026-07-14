@@ -1,13 +1,17 @@
 import * as THREE from "three";
 import type { Layer } from "../Layer";
+import type { Vector3Like } from "../../astronomy/types";
 import { BASE_EARTH_ANGULAR_SPEED, COLORS, EARTH_RADIUS } from "../../config/constants";
 import { EARTH_AXIAL_TILT_DEG } from "../../astronomy/constants";
 
 /**
  * The fundamental Earth layer: an ocean-colored sphere plus the three
  * nested groups everything else on Earth attaches to:
- *  - `object3D` (orbitGroup): where Earth sits in space. Idle today,
- *    will carry Earth's revolution around the Sun later.
+ *  - `object3D` (orbitGroup): where Earth sits in space - see
+ *    setOrbitPosition(), driven by main.ts's "Center: Earth/Sun" toggle
+ *    (RenderCenter.ts). Fixed at the origin in Center:Earth mode (every
+ *    other system's assumption); carries Earth's real position relative to
+ *    the Sun in Center:Sun mode.
  *  - `tiltGroup`: fixed axial tilt, settable via setAxialTilt(). Tilts
  *    around a fixed world Z axis - a FIXED direction in the ecliptic/world
  *    frame, not relative to Earth's current orbital position, matching how
@@ -82,6 +86,17 @@ export class EarthBase implements Layer {
    *  from world +Y/Polaris. */
   setAxialTilt(tiltDeg: number): void {
     this.tiltGroup.rotation.z = -THREE.MathUtils.degToRad(tiltDeg - EARTH_AXIAL_TILT_DEG);
+  }
+
+  /** Moves Earth's whole rig (mesh, continents, axis, every ObserverStation
+   *  and everything parented under them - Ground View's camera, WASD, the
+   *  personal zenith/alt-az grids - see GroundCameraRig.syncParent and
+   *  GroundObserver.getFrame, both of which read the real world-position
+   *  chain fresh each frame) to `position` in world space. Called every
+   *  frame from main.ts's render loop, not just on toggle - see
+   *  RenderCenter.ts. */
+  setOrbitPosition(position: Vector3Like): void {
+    this.object3D.position.set(position.x, position.y, position.z);
   }
 
   update(deltaSeconds: number): void {

@@ -21,6 +21,18 @@
   user-select: none;
 }
 
+/* The top-level "Center: Earth / Center: Sun" tab strip - deliberately
+   NOT a .control-panel-section (always visible, no collapse). Sits first
+   in the panel; the next section's own border-top (its :first-child rule
+   no longer applies once this precedes it) provides the single separator
+   line below, so no border is added here to avoid a doubled-up line. */
+.control-view-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-bottom: 8px;
+}
+
 .control-panel-section {
   border-top: 1px solid rgba(255, 255, 255, 0.08);
   padding-top: 6px;
