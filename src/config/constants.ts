@@ -4,21 +4,38 @@
 export const EARTH_RADIUS = 5;
 
 // The ONE sky/celestial-sphere display radius, shared by stars,
-// constellations, the celestial sphere wireframe shell, every observer's
-// zenith marker/alt-az grid, and the Sun/Moon sky-path lines. A single
-// live-adjustable slider spans from a small, comprehensible "diagram" scale
-// (MIN, close to EARTH_RADIUS so the celestial-sphere concept - "you are
-// the center of a sphere of fixed stars" - is easy to see and reason about)
-// up to an effectively-infinite immersive backdrop (MAX, where parallax
-// against the observer's own position becomes imperceptible). There used
-// to be two entirely separate radii/tiers (a "sky" instance pinned near
-// MAX and a "globe" instance pinned near MIN) each with its own duplicated
-// set of density/brightness/size controls - collapsed to one tier, one
-// radius, one set of controls; zoom the radius instead of maintaining two
-// parallel scenes.
-export const STAR_RADIUS_DEFAULT = 25;
+// constellations, the celestial sphere wireframe shell, and the Sun/Moon
+// sky-path lines. A single live-adjustable slider spans from a small,
+// comprehensible "diagram" scale (MIN, close to EARTH_RADIUS so the
+// celestial-sphere concept - "you are the center of a sphere of fixed
+// stars" - is easy to see and reason about) up to an effectively-infinite
+// immersive backdrop (MAX, where parallax against the observer's own
+// position becomes imperceptible). There used to be two entirely separate
+// radii/tiers (a "sky" instance pinned near MAX and a "globe" instance
+// pinned near MIN) each with its own duplicated set of density/brightness/
+// size controls - collapsed to one tier, one radius, one set of controls;
+// zoom the radius instead of maintaining two parallel scenes.
+export const STAR_RADIUS_DEFAULT = 2000;
 export const STAR_RADIUS_MIN = 10;
 export const STAR_RADIUS_MAX = 2000;
+
+// A SEPARATE, tiny, fixed radius for each observer's alt-az grid -
+// deliberately NOT tied to STAR_RADIUS_*. Unlike the star field (which is
+// meant to visibly BE "the sky, at whatever scale") or the zenith (a real
+// point on the celestial sphere - see ZENITH_DOT_SIZE below), the alt-az
+// grid is a personal "you are here, this is your horizon" prop - from
+// Space View, it should read as a barely-visible dome sitting on the
+// planet at the observer's feet, not balloon out to anywhere near Earth's
+// own scale. A small fraction of EARTH_RADIUS, just enough to clear the
+// ground mesh instead of intersecting it.
+export const ALT_AZ_DOME_RADIUS = EARTH_RADIUS * 0.06;
+
+// The zenith marker's own dot size, in world units - deliberately a FIXED
+// absolute size, independent of the (now sky-radius-scale, up to 2000)
+// `radius` its point/line project to - see ZenithLayer's doc comment for
+// why decoupling these two was necessary once the zenith line started
+// reaching out to the shared sky radius instead of a small fixed value.
+export const ZENITH_DOT_SIZE = EARTH_RADIUS * 0.015;
 
 export const STARS_DEFAULT = {
   limitingMagnitude: 6.5,
@@ -113,7 +130,7 @@ export const SUN_DISTANCE_MAX_RADII = 400;
 // Moon-Earth distance - independent of the Sun distance above (real
 // Earth-Sun distance is ~389x real Earth-Moon distance, so they should
 // never be forced to scale together).
-export const MOON_DISTANCE_DEFAULT_RADII = 1.5;
+export const MOON_DISTANCE_DEFAULT_RADII = 10;
 export const MOON_DISTANCE_MIN_RADII = 1.1;
 export const MOON_DISTANCE_MAX_RADII = 20;
 
@@ -121,9 +138,9 @@ export const MOON_DISTANCE_MAX_RADII = 20;
 // the sky from Ground View - overwhelming), then EARTH_RADIUS exactly (made
 // the Sun literally the SAME SIZE as Earth's own mesh sitting right next to
 // it - reads as two peer planets, not a star and the planet orbiting it).
-// Settled on 1.5x - clearly bigger than Earth in Space View, still
+// Settled on 2x - clearly bigger than Earth in Space View, still
 // dramatic-not-absurd from Ground View.
-export const SUN_SIZE_DEFAULT_RADII = 1.5;
+export const SUN_SIZE_DEFAULT_RADII = 2;
 export const SUN_SIZE_MIN_RADII = 0.3;
 export const SUN_SIZE_MAX_RADII = 6;
 

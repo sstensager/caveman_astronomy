@@ -26,9 +26,9 @@ export class CameraManager {
       domElement,
       initialPosition: [EARTH_RADIUS * 3, EARTH_RADIUS * 2, EARTH_RADIUS * 3],
       minDistance: EARTH_RADIUS * 1.5,
-      // 200x (not 40x) so "Center: Sun" mode's much larger Earth-Sun
-      // distance (CENTER_SUN_EARTH_ORBIT_SCALE, config/constants.ts -
-      // EARTH_RADIUS*60) can actually be zoomed out to and comfortably
+      // 200x (not 40x) so the Sun & Moon section's Sun-Earth distance
+      // slider (config/constants.ts's SUN_DISTANCE_DEFAULT_RADII, main.ts's
+      // setSunDistanceRadii) can actually be zoomed out to and comfortably
       // framed with margin, not just barely reached.
       maxDistance: EARTH_RADIUS * 200,
     });
@@ -50,10 +50,19 @@ export class CameraManager {
   }
 
   /** Only meaningful in Space View - see the class doc comment on spaceRig.
-   *  Lets "Center: Sun" mode's Earth-Sun distance slider (main.ts) keep the
-   *  zoom-out range comfortably ahead of the orbit's actual size. */
+   *  Lets the Sun & Moon section's Sun-Earth distance slider (main.ts) keep
+   *  the zoom-out range comfortably ahead of the orbit's actual size. */
   setSpaceMaxDistance(distance: number): void {
     this.spaceRig.setMaxDistance(distance);
+  }
+
+  /** Only meaningful in Space View - see OrbitCameraRig.setFollowTarget.
+   *  Ground View's camera is anchored to the observer station instead and
+   *  has no notion of a follow target; setting one here while in Ground
+   *  View is harmless and takes effect silently the next time Space View
+   *  becomes active. */
+  setSpaceFollowTarget(getter: (() => THREE.Vector3) | undefined): void {
+    this.spaceRig.setFollowTarget(getter);
   }
 
   setMode(mode: CameraMode): void {

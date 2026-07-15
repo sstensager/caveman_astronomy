@@ -38,9 +38,11 @@ import { SCENE_PRESETS } from "./ui/scenePresets";
 import { StarPicker } from "./interaction/StarPicker";
 import { SelectedStarMarker } from "./interaction/SelectedStarMarker";
 import { ObserverDragHandler } from "./interaction/ObserverDragHandler";
+import { BodyTargetPicker, type TargetableBody } from "./interaction/BodyTargetPicker";
 import type { HemisphereMode } from "./utils/hemisphereFade";
 import type { Layer } from "./layers/Layer";
 import {
+  ALT_AZ_DOME_RADIUS,
   COLORS,
   DEFAULT_LATITUDE_DEG,
   EARTH_RADIUS,
@@ -67,6 +69,7 @@ import {
   SUN_SIZE_MIN_RADII,
   SUN_SIZE_MAX_RADII,
   CELESTIAL_SPHERE_WIREFRAME_OPACITY_DEFAULT,
+  ZENITH_DOT_SIZE,
   TIME_SPEED_DEFAULT,
   TIME_SPEED_MAX,
   TIME_SPEED_MIN,
@@ -154,15 +157,19 @@ let observerFarSideIndicatorEnabled = true;
 let nextObserverNumber = 1;
 
 // The one shared sky/celestial-sphere radius - stars, constellations, the
-// wireframe shell, every observer's zenith marker/alt-az grid, and the
-// Sun/Moon sky-path lines all track this same live value (see
-// config/constants.ts's STAR_RADIUS_* doc comment).
+// wireframe shell, the Sun/Moon sky-path lines, and each observer's zenith
+// all track this same live value (see config/constants.ts's STAR_RADIUS_*
+// doc comment) - the zenith really is a point on the celestial sphere
+// directly overhead, so its line/point should reach exactly as far as the
+// rest of the sky does. Each observer's alt-az GRID deliberately does NOT
+// track this - see ALT_AZ_DOME_RADIUS.
 let skyRadius = STAR_RADIUS_DEFAULT;
 
 function createObserverEntry(id: string, label: string, latDeg: number, lonDeg: number, colorIndex: number): ObserverEntry {
   const station = new ObserverStation(earthBase.rotationGroup, { id, label, latDeg, lonDeg });
   const observer = new GroundObserver(id, station.object3D);
   const color = OBSERVER_COLORS[colorIndex % OBSERVER_COLORS.length];
+  const colorHex = `#${color.toString(16).padStart(6, "0")}`;
   const marker = new ObserverMarker(id, label, () => observer.getFrame().worldPosition, {
     color,
     getEarthCenter: () => earthBase.object3D.getWorldPosition(new THREE.Vector3()),
@@ -171,16 +178,25 @@ function createObserverEntry(id: string, label: string, latDeg: number, lonDeg: 
   marker.setFarSideIndicatorEnabled(observerFarSideIndicatorEnabled);
   scene.add(marker.object3D);
 
+  // Colored to match this observer's own marker pin - see `color` above -
+  // so which dome/zenith belongs to which observer reads at a glance.
   const zenith = new ZenithLayer({
     id: `${id}Zenith`,
     label: `${label} Zenith`,
     radius: skyRadius,
+    dotSize: ZENITH_DOT_SIZE,
+    color,
     getActiveObserver: () => observer,
   });
+  // Fixed at ALT_AZ_DOME_RADIUS, NOT the shared skyRadius - see that
+  // constant's doc comment for why this stays a tiny personal dome instead
+  // of ballooning out with the star field.
   const altAzGrid = new AltAzGridLayer({
     id: `${id}AltAzGrid`,
     label: `${label} Alt/Az Grid`,
-    radius: skyRadius,
+    radius: ALT_AZ_DOME_RADIUS,
+    color,
+    compassColor: colorHex,
     getActiveObserver: () => observer,
   });
 
@@ -275,7 +291,9 @@ const moonSkyPath = new SkyPathLineLayer({
 });
 
 /** Every layer whose display radius tracks the shared skyRadius - called
- *  whenever the Sky radius slider changes. */
+ *  whenever the Sky radius slider changes. Includes each observer's zenith
+ *  (a real point on the celestial sphere) but deliberately excludes their
+ *  alt-az GRID - see ALT_AZ_DOME_RADIUS's doc comment. */
 function setSkyRadius(radius: number): void {
   skyRadius = radius;
   stars.setRadius(radius);
@@ -286,7 +304,6 @@ function setSkyRadius(radius: number): void {
   moonSkyPath.setRadius(radius);
   for (const entry of observerRegistry.all()) {
     entry.zenith.setRadius(radius);
-    entry.altAzGrid.setRadius(radius);
   }
 }
 
@@ -525,6 +542,31 @@ new ObserverDragHandler(
   },
 );
 
+// --- Target lock: click the Sun/Moon/Earth to center and follow it -------
+// Space View only (see CameraManager.setSpaceFollowTarget) - Ground View's
+// camera is anchored to the observer station and has no orbit target to
+// re-center.
+const targetableBodies: TargetableBody[] = [
+  { id: "sun", label: "Sun", object3D: sunMarker.object3D },
+  { id: "moon", label: "Moon", object3D: moonMarker.object3D },
+  { id: "earth", label: "Earth", object3D: earthBase.mesh },
+];
+
+function setTargetedBody(id: string | undefined): void {
+  const body = id ? targetableBodies.find((b) => b.id === id) : undefined;
+  cameraManager.setSpaceFollowTarget(body ? () => body.object3D.getWorldPosition(new THREE.Vector3()) : undefined);
+  controlPanel.setTargetedBody(body?.label);
+}
+
+new BodyTargetPicker(() => cameraManager.getActiveCamera(), renderer.domElement, targetableBodies, setTargetedBody);
+
+// Same release path as clicking empty space (see BodyTargetPicker's doc
+// comment) - a global listener rather than scoped to the canvas so it
+// still works while focus is on a control panel input.
+window.addEventListener("keydown", (event) => {
+  if (event.key === "Escape") setTargetedBody(undefined);
+});
+
 function addObserver(): void {
   const number = nextObserverNumber;
   nextObserverNumber += 1;
@@ -733,6 +775,7 @@ const panelConfig: ControlPanelConfig = {
       activeId: CameraUpMode.Equatorial,
       onSwitchActive: switchCameraUpMode,
     },
+    onClearTarget: () => setTargetedBody(undefined),
   },
   time: {
     onPlayPauseChange: (paused) => (simClock.paused = paused),

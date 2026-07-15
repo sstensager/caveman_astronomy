@@ -2,12 +2,20 @@ import * as THREE from "three";
 import type { Layer, LayerGroup } from "../layers/Layer";
 import type { Observer } from "./Observer";
 import { projectDirectionToSphere } from "./projection";
-import { CELESTIAL_MARKER_SIZE_RATIO } from "../config/constants";
 
 export interface ZenithLayerOptions {
   id: string;
   label: string;
+  /** How far out the zenith point/line projects - the zenith really is a
+   *  point on the celestial sphere directly overhead, so this is typically
+   *  the shared sky radius (see main.ts's skyRadius), not a small fixed
+   *  value - can range up to effectively "infinity" (STAR_RADIUS_MAX). */
   radius: number;
+  /** Absolute marker-dot size, in world units, INDEPENDENT of `radius` -
+   *  the dot itself should read as a small fixed marker regardless of how
+   *  far its line extends, not balloon up proportionally the way the sky
+   *  radius can (10 to 2000) - see config/constants.ts's ZENITH_DOT_SIZE. */
+  dotSize: number;
   color?: number;
   getActiveObserver: () => Observer;
 }
@@ -21,8 +29,7 @@ export interface ZenithLayerOptions {
  *
  * Always offset by the observer's live world position - structurally
  * required here, since the whole point is that it's rooted at the
- * observer, and the offset is non-negligible once the shared sky radius
- * (see main.ts's skyRadius) is dialed down small.
+ * observer.
  *
  * Takes a LAZY getActiveObserver getter (mirroring StarPicker's getCamera
  * pattern) rather than a fixed Observer, so a single instance always
@@ -36,22 +43,19 @@ export class ZenithLayer implements Layer {
 
   private readonly pointMesh: THREE.Mesh;
   private readonly line: THREE.Line;
-  private readonly baseRadius: number;
   private readonly getActiveObserver: () => Observer;
   private radius: number;
 
   constructor(options: ZenithLayerOptions) {
     this.id = options.id;
     this.label = options.label;
-    this.baseRadius = options.radius;
     this.radius = options.radius;
     this.getActiveObserver = options.getActiveObserver;
 
     const color = options.color ?? 0x7fe0ff;
 
-    const markerSize = options.radius * CELESTIAL_MARKER_SIZE_RATIO;
     const pointMaterial = new THREE.MeshBasicMaterial({ color });
-    this.pointMesh = new THREE.Mesh(new THREE.SphereGeometry(markerSize, 16, 12), pointMaterial);
+    this.pointMesh = new THREE.Mesh(new THREE.SphereGeometry(options.dotSize, 16, 12), pointMaterial);
     this.pointMesh.name = `ZenithLayer.${options.id}.point`;
 
     const lineGeometry = new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]);
@@ -81,11 +85,11 @@ export class ZenithLayer implements Layer {
     this.object3D.visible = visible;
   }
 
-  /** Rescales the point marker to stay proportionally sized as the shared
-   *  sky radius changes, and updates the radius future update() calls
-   *  project onto - mirrors OrbitingBodyMarkerLayer.setMarkerSize. */
+  /** Updates how far future update() calls project the point/line - the
+   *  dot's own visual size is fixed at construction (dotSize) and never
+   *  rescaled here, unlike the old radius-proportional behavior this
+   *  replaced. */
   setRadius(radius: number): void {
     this.radius = radius;
-    this.pointMesh.scale.setScalar(radius / this.baseRadius);
   }
 }

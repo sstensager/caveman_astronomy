@@ -7,6 +7,15 @@ import { ECLIPTIC_POLE_IN_WORLD } from "../astronomy/frames";
 const EQUATORIAL_UP = new THREE.Vector3(0, 1, 0);
 const ECLIPTIC_UP = new THREE.Vector3(ECLIPTIC_POLE_IN_WORLD.x, ECLIPTIC_POLE_IN_WORLD.y, ECLIPTIC_POLE_IN_WORLD.z);
 
+// Per-frame ease-in factor for controls.target chasing a follow target's
+// live position (see setFollowTarget) - NOT OrbitControls' own
+// dampingFactor, which only smooths user rotate/zoom input, never a
+// target set externally. Small enough to read as a deliberate swing-to-
+// center over several frames on the initial jump to a far body, close
+// enough to 1 that it's imperceptible lag once actually tracking a slowly
+// orbiting body frame to frame.
+const FOLLOW_TARGET_EASE = 0.12;
+
 export interface OrbitCameraRigOptions {
   domElement: HTMLElement;
   initialPosition: [number, number, number];
@@ -33,6 +42,7 @@ export class OrbitCameraRig implements CameraRig {
   // needing a full controls rebuild.
   private maxDistance: number;
   private upMode: CameraUpMode = CameraUpMode.Equatorial;
+  private followTargetGetter?: () => THREE.Vector3;
 
   constructor(options: OrbitCameraRigOptions) {
     this.camera = new THREE.PerspectiveCamera(options.fov ?? 50, 1, options.near ?? 0.1, options.far ?? 20000);
@@ -94,6 +104,22 @@ export class OrbitCameraRig implements CameraRig {
     this.controls.maxDistance = distance;
   }
 
+  /** "Center on and follow this body" - see main.ts's BodyTargetPicker/
+   *  setTargetedBody. Each update() eases controls.target toward the
+   *  getter's current world position instead of snapping instantly, which
+   *  reads as the camera smoothly swinging to re-center on the body while
+   *  preserving whatever distance/angle the user was already viewing from:
+   *  OrbitControls reconstructs camera.position from target + its existing
+   *  spherical offset every update(), so translating target translates the
+   *  camera rigidly with it - no separate camera-position math needed
+   *  here, and the user's own drag-to-orbit/zoom keeps working normally
+   *  around the moving target. Pass undefined to release tracking; the
+   *  target is left wherever it last eased to, matching a manual
+   *  escape/click-away release leaving the view exactly where it is. */
+  setFollowTarget(getter: (() => THREE.Vector3) | undefined): void {
+    this.followTargetGetter = getter;
+  }
+
   setActive(active: boolean): void {
     this.controls.enabled = active;
   }
@@ -108,6 +134,9 @@ export class OrbitCameraRig implements CameraRig {
   }
 
   update(): void {
+    if (this.followTargetGetter) {
+      this.controls.target.lerp(this.followTargetGetter(), FOLLOW_TARGET_EASE);
+    }
     this.controls.update();
   }
 

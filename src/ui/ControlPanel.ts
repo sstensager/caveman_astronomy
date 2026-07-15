@@ -167,6 +167,11 @@ export interface ControlPanelConfig {
     viewModes: ViewModeDef[];
     onCameraModeChange: (mode: CameraMode) => void;
     upMode: CameraUpModePanelConfig;
+    /** Releases whatever body is currently targeted (see
+     *  BodyTargetPicker/setTargetedBody in main.ts) - same effect as
+     *  pressing Escape or clicking empty space, exposed here as a button
+     *  for discoverability. */
+    onClearTarget: () => void;
   };
   time: {
     onPlayPauseChange: (paused: boolean) => void;
@@ -220,6 +225,7 @@ export class ControlPanel {
   private observerSwitcherElement?: HTMLElement;
   private observerTogglesContainer?: HTMLElement;
   private observerLatLonLabel?: HTMLElement;
+  private targetedBodyLabel?: HTMLElement;
   private onSwitchActiveObserver?: (id: string) => void;
 
   constructor(container: HTMLElement, config: ControlPanelConfig) {
@@ -308,6 +314,15 @@ export class ControlPanel {
     const latText = `${Math.abs(latDeg).toFixed(1)}°${latDeg >= 0 ? "N" : "S"}`;
     const lonText = `${Math.abs(lonDeg).toFixed(1)}°${lonDeg >= 0 ? "E" : "W"}`;
     this.observerLatLonLabel.textContent = `${latText}, ${lonText}`;
+  }
+
+  /** Reflects the currently-targeted body (see BodyTargetPicker/
+   *  setTargetedBody in main.ts) in the Camera section - pass undefined
+   *  when tracking is released (Escape, clicking elsewhere, or the Clear
+   *  Target button). */
+  setTargetedBody(label: string | undefined): void {
+    if (!this.targetedBodyLabel) return;
+    this.targetedBodyLabel.textContent = label ? `Following: ${label} (Esc or click elsewhere to release)` : "";
   }
 
   /** Reflects a programmatic layer-visibility change (e.g. a scene preset)
@@ -617,7 +632,19 @@ export class ControlPanel {
     }
     this.setActiveUpMode(config.camera.upMode.activeId);
 
-    return createSection("Camera", true, [element, createSubsectionHeading("Up (Space View)"), upModeElement]);
+    this.targetedBodyLabel = document.createElement("div");
+    this.targetedBodyLabel.className = "control-selected-star-line";
+    const clearTargetButton = createButton("Clear Target", config.camera.onClearTarget);
+
+    return createSection("Camera", true, [
+      element,
+      createSubsectionHeading("Up (Space View)"),
+      upModeElement,
+      createSubsectionHeading("Target Lock (Space View)"),
+      createPlaceholder("Click the Sun, Moon, or Earth to center and follow it."),
+      this.targetedBodyLabel,
+      clearTargetButton,
+    ]);
   }
 
   private buildTimeSection(config: ControlPanelConfig): HTMLElement {

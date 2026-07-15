@@ -8,6 +8,12 @@ const ALTITUDE_CIRCLE_SEGMENTS = 48;
 const AZIMUTH_MERIDIAN_COUNT = 8;
 const AZIMUTH_MERIDIAN_SEGMENTS = 12;
 
+// Compass-letter sprite size as a fraction of the grid's own radius - much
+// larger than a body marker's size ratio (see CELESTIAL_MARKER_SIZE_RATIO)
+// since a single letter needs to read clearly at a glance, not just as a
+// dot.
+const COMPASS_LABEL_SIZE_RATIO = 0.35;
+
 /** createLabelTexture's default canvas (256x64) is tuned for word-shaped
  *  constellation names - a single compass letter drawn centered on it would
  *  occupy a small fraction of the width, rendering as a tiny, hard-to-see
@@ -121,16 +127,24 @@ export class AltAzGridLayer implements Layer {
 
     const createTexture = options.createTexture ?? createCompassLetterTexture;
     const compassColor = options.compassColor ?? "#ffffff";
+    // Scaled off `radius` (world units, sizeAttenuation true) rather than a
+    // fixed screen-space size - this grid is a small personal dome (see
+    // config/constants.ts's ALT_AZ_DOME_RADIUS), so its labels need to
+    // shrink into invisibility from far away exactly like the dome itself
+    // does, not stay pinned at a constant on-screen size regardless of
+    // camera distance (that used to make them dwarf the entire planet from
+    // Space View).
+    const compassSize = options.radius * COMPASS_LABEL_SIZE_RATIO;
     this.compassSprites = COMPASS_POINTS.map(({ letter, azimuthRad }) => {
       const spriteMaterial = new THREE.SpriteMaterial({
         map: createTexture(letter, compassColor),
-        sizeAttenuation: false,
+        sizeAttenuation: true,
         transparent: true,
         depthTest: false,
         depthWrite: false,
       });
       const sprite = new THREE.Sprite(spriteMaterial);
-      sprite.scale.set(0.09, 0.09, 1);
+      sprite.scale.set(compassSize, compassSize, 1);
       sprite.renderOrder = 997;
       this.object3D.add(sprite);
       return { letter, azimuthRad, sprite };
