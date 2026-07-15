@@ -84,9 +84,10 @@ export interface ObserverMarkerOptions {
   occludedFragmentShader?: string;
   /** Earth's current world-space center, for the self-occlusion check below
    *  - defaults to a fixed origin getter, matching the assumption every
-   *  caller relied on before "Center: Sun" mode existed (see
-   *  RenderCenter.ts). Callers that might render while Earth has moved
-   *  (main.ts's createObserverEntry) must pass the live getter instead. */
+   *  caller relied on before Earth could actually move (Heliocentric's Real
+   *  Distance tier - see main.ts's render loop). Callers that might render
+   *  while Earth has moved (main.ts's createObserverEntry) must pass the
+   *  live getter instead. */
   getEarthCenter?: () => THREE.Vector3;
 }
 

@@ -2,124 +2,112 @@ import { CameraMode } from "../cameras/CameraMode";
 
 /**
  * A hardcoded, one-click starting point for an educational shot. Each
- * preset lists a value for every known layer id so applying one fully
- * replaces the current visibility state rather than merging on top of
- * whatever was already toggled - the whole point is "pick a preset" as
- * step one of a shot, not "pick a preset, then remember what to turn off."
+ * preset lists a value only for the layer ids it cares about - applying one
+ * MERGES onto whatever else is already toggled (unlike the old design,
+ * which had to hand-list every single layer id as `false` to fully replace
+ * state - see git history). That hand-maintained "every known layer, off by
+ * default" map was itself a symptom of the old per-model/per-tier layer
+ * explosion; with exactly one Sun, one Moon, one star field, one Earth,
+ * there's no longer a combinatorial set of ids a preset needs to silently
+ * reset.
  */
 export interface ScenePreset {
   id: string;
   label: string;
   layers: Record<string, boolean>;
   cameraMode?: CameraMode;
-}
-
-// Model ids must match main.ts's modelRegistry.add() calls - each model's
-// explanatory-globe diagram (Sun/Moon markers + orbit lines) is fully
-// independent (see AstronomyModelRegistry's doc comment - no "active" model
-// anymore), so presets address them individually rather than through one
-// shared id.
-const MODEL_IDS = ["heliocentric", "geocentric"] as const;
-
-const ALL_LAYERS_OFF: Record<string, boolean> = {
-  earthBase: false,
-  continents: false,
-  axis: false,
-  backgroundStars: false,
-  celestialSphereStars: false,
-  sunMarkerSky: false,
-  moonMarkerSky: false,
-  sunEclipticPath: false,
-  moonSkyPath: false,
-  celestialSphereShell: false,
-  observerMarkers: false,
-  // observer-1's zenith/grid (see ObserverRegistry) - the only observer ID
-  // presets can rely on always existing; any observers added later via
-  // "Add Observer" are personal, per-observer toggles a preset shouldn't
-  // reach into.
-  "observer-1Zenith": false,
-  "observer-1AltAzGrid": false,
-};
-for (const modelId of MODEL_IDS) {
-  ALL_LAYERS_OFF[`${modelId}SunMarkerGlobe`] = false;
-  ALL_LAYERS_OFF[`${modelId}MoonMarkerGlobe`] = false;
-  ALL_LAYERS_OFF[`${modelId}OrbitLines`] = false;
-  // The Solar System diagram (Sun-centered, Earth/Moon actually orbiting -
-  // see main.ts's buildSolarSystemDiagram) - a third per-model diagram tier,
-  // easy to forget here (see NOTES.md's ALL_LAYERS_OFF warning).
-  ALL_LAYERS_OFF[`${modelId}SolarSystemBodies`] = false;
-  ALL_LAYERS_OFF[`${modelId}SolarSystemEarthPath`] = false;
+  /** Switches the active Scene before anything else in this preset is
+   *  applied - omit to leave whichever Scene is currently active untouched. */
+  scene?: "geocentric" | "heliocentric";
+  /** Optional distance/radius overrides (Earth-radii units for the two
+   *  distances, render units for skyRadius - see config/constants.ts's
+   *  STAR_RADIUS, SUN_DISTANCE, and MOON_DISTANCE default constants). Omit
+   *  any to leave that slider wherever the user last left it - a preset is
+   *  a starting point, not a full state reset (see this file's own doc
+   *  comment). */
+  skyRadius?: number;
+  sunDistanceRadii?: number;
+  moonDistanceRadii?: number;
 }
 
 export const SCENE_PRESETS: ScenePreset[] = [
   {
     id: "emptySpace",
     label: "Empty Space",
-    layers: { ...ALL_LAYERS_OFF },
+    layers: {
+      earthBase: false,
+      continents: false,
+      axis: false,
+      stars: false,
+      sunMarker: false,
+      moonMarker: false,
+      sunEclipticPath: false,
+      moonSkyPath: false,
+      orbitLines: false,
+      earthOrbitLine: false,
+      celestialSphereShell: false,
+      observerMarkers: false,
+    },
     cameraMode: CameraMode.Space,
   },
   {
     id: "earthOnly",
     label: "Earth Only",
-    layers: { ...ALL_LAYERS_OFF, earthBase: true, continents: true },
+    layers: { earthBase: true, continents: true, sunMarker: false, moonMarker: false, stars: false, observerMarkers: false },
     cameraMode: CameraMode.Space,
   },
   {
     id: "earthAndSun",
     label: "Earth + Sun",
-    layers: { ...ALL_LAYERS_OFF, earthBase: true, continents: true, sunMarkerSky: true },
+    layers: { earthBase: true, continents: true, sunMarker: true, moonMarker: false, stars: false, observerMarkers: false },
     cameraMode: CameraMode.Space,
   },
   {
     id: "observerView",
     label: "Observer View",
     layers: {
-      ...ALL_LAYERS_OFF,
       earthBase: true,
       continents: true,
-      sunMarkerSky: true,
-      moonMarkerSky: true,
-      backgroundStars: true,
+      sunMarker: true,
+      moonMarker: true,
+      stars: true,
       observerMarkers: true,
     },
     cameraMode: CameraMode.Ground,
   },
   {
-    id: "celestialSphere",
-    label: "Celestial Sphere",
-    // The complete explanatory-globe diagram: Earth-centered shell, its own
-    // star field, plus Heliocentric's globe-tier Sun/Moon markers and their
-    // real elliptical orbit lines (see OrbitLineLayer) - one click for "show
-    // me the whole small diagram together" instead of hunting through
-    // Astronomy Model's per-model checkboxes separately. Heliocentric is an
-    // arbitrary pick (both models render identically here - see
-    // AstronomyModelRegistry) - turn on Geocentric's own checkboxes too to
-    // compare both diagrams at once.
+    id: "celestialSphereDemo",
+    label: "Celestial Sphere Demo",
+    // The whole point of dialing the shared sky radius down small: the
+    // wireframe shell, stars, and Sun/Moon markers all read as one small,
+    // comprehensible diagram wrapped snugly around Earth - demonstrating
+    // "you are the center of your own celestial sphere" directly, rather
+    // than needing a second parallel display system.
     layers: {
-      ...ALL_LAYERS_OFF,
       earthBase: true,
       continents: true,
       celestialSphereShell: true,
-      celestialSphereStars: true,
-      sunMarkerSky: true,
-      moonMarkerSky: true,
-      heliocentricSunMarkerGlobe: true,
-      heliocentricMoonMarkerGlobe: true,
-      heliocentricOrbitLines: true,
+      stars: true,
+      sunMarker: true,
+      moonMarker: true,
+      orbitLines: true,
+      observerMarkers: true,
     },
     cameraMode: CameraMode.Space,
+    skyRadius: 25,
+    sunDistanceRadii: 12,
+    moonDistanceRadii: 2.5,
   },
   {
     id: "teachingDefault",
     label: "Teaching Default",
     layers: {
-      ...ALL_LAYERS_OFF,
       earthBase: true,
       continents: true,
       axis: true,
-      backgroundStars: true,
-      sunMarkerSky: true,
-      moonMarkerSky: true,
+      stars: true,
+      sunMarker: true,
+      moonMarker: true,
       observerMarkers: true,
     },
     cameraMode: CameraMode.Space,

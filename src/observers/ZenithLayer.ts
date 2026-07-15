@@ -14,16 +14,15 @@ export interface ZenithLayerOptions {
 
 /**
  * Projects the active observer's local "up" (zenith) direction onto a
- * celestial sphere of the given radius, rendered as both a point (matching
- * CelestialMarkerLayer's dot-marker convention) and a line from the
- * observer's own position out to that point (AxisLayer's two-point
- * THREE.Line technique, rebuilt each frame since the observer moves).
+ * celestial sphere of the given radius, rendered as both a point and a
+ * line from the observer's own position out to that point (AxisLayer's
+ * two-point THREE.Line technique, rebuilt each frame since the observer
+ * moves).
  *
- * Always offset by the observer's live world position - unlike
- * CelestialMarkerLayer's optional observerCentered flag, this is
- * structurally required here: the whole point is that it's rooted at the
- * observer, and the offset is non-negligible even at the globe tier's
- * small radius.
+ * Always offset by the observer's live world position - structurally
+ * required here, since the whole point is that it's rooted at the
+ * observer, and the offset is non-negligible once the shared sky radius
+ * (see main.ts's skyRadius) is dialed down small.
  *
  * Takes a LAZY getActiveObserver getter (mirroring StarPicker's getCamera
  * pattern) rather than a fixed Observer, so a single instance always
@@ -82,9 +81,9 @@ export class ZenithLayer implements Layer {
     this.object3D.visible = visible;
   }
 
-  /** Rescales the point marker to stay proportionally sized as the
-   *  celestial sphere's display radius changes, and updates the radius
-   *  future update() calls project onto - mirrors CelestialMarkerLayer. */
+  /** Rescales the point marker to stay proportionally sized as the shared
+   *  sky radius changes, and updates the radius future update() calls
+   *  project onto - mirrors OrbitingBodyMarkerLayer.setMarkerSize. */
   setRadius(radius: number): void {
     this.radius = radius;
     this.pointMesh.scale.setScalar(radius / this.baseRadius);

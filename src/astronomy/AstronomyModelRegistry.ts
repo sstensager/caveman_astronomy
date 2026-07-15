@@ -7,14 +7,15 @@ export interface AstronomyModelEntry {
 }
 
 /**
- * The list of every AstronomyModel the app knows about. There is no notion
- * of a single "active" model here - each registered model is permanently,
- * independently addressable (see main.ts's per-model diagram builder), which
- * is what lets both models' explanatory diagrams be toggled on screen at
- * once instead of exactly one being "selected". Adding a future third model
- * (e.g. epicycles) is a single add() call - both the diagram-building loop
- * and the control-panel-building loop in main.ts iterate all() to pick up
- * new entries automatically.
+ * The list of every AstronomyModel the app knows about. This class itself
+ * has no notion of a single "active" model - main.ts's activeScene picks
+ * one directly (registry ids "geocentric"/"heliocentric" match Scene ids
+ * one-to-one, see main.ts's getActiveModel), so exactly one is ever
+ * consulted per frame. Both models are proven to produce identical apparent
+ * sky positions (see modelEquivalence.test.ts) - which one actually
+ * computes a given Scene's state is an implementation detail, never a
+ * visible difference, so there is no per-model UI or duplicated Layer set
+ * anywhere downstream of this registry.
  */
 export class AstronomyModelRegistry {
   private readonly entries = new Map<string, AstronomyModelEntry>();

@@ -1,12 +1,18 @@
 import * as THREE from "three";
 import type { Layer, LayerGroup } from "../Layer";
+import type { Observer } from "../../observers/Observer";
 import { hemisphereFadeFactor, type HemisphereMode } from "../../utils/hemisphereFade";
 
 /**
- * A translucent wireframe reference sphere for the "explanatory globe" view -
- * gives the small-scale Sun/Moon/star markers a visible surface to read as
- * "wrapped around Earth" from outside, rather than floating in empty space.
- * Purely a static visual reference; carries no model/motion logic.
+ * A translucent wireframe reference sphere marking the surface of the
+ * shared sky radius (see config/constants.ts's STAR_RADIUS_*) - gives the
+ * star field/Sun/Moon markers a visible surface to read against, and is
+ * itself the clearest visual demonstration of "the celestial sphere"
+ * concept when the radius is dialed down small. Purely a static visual
+ * reference; carries no model/motion logic of its own beyond tracking the
+ * observer's position, same as StarsLayer - the celestial sphere is
+ * centered on the OBSERVER, not on Earth's core, an offset that only reads
+ * as visible once the radius shrinks close to EARTH_RADIUS.
  *
  * Built at unit radius and scaled via object3D.scale (same pattern as
  * StarsLayer) so the display radius can change live without rebuilding
@@ -19,9 +25,12 @@ export class CelestialSphereShell implements Layer {
   readonly object3D: THREE.Mesh;
 
   private readonly material: THREE.MeshBasicMaterial;
+  private readonly getObserver?: () => Observer;
   private hemisphereMode: HemisphereMode = "none";
 
-  constructor(radius: number) {
+  constructor(radius: number, getObserver?: () => Observer) {
+    this.getObserver = getObserver;
+
     const geometry = new THREE.SphereGeometry(1, 24, 16);
     const colorAttribute = new THREE.BufferAttribute(
       new Float32Array(geometry.getAttribute("position").count * 3).fill(1),
@@ -43,6 +52,13 @@ export class CelestialSphereShell implements Layer {
 
   setVisible(visible: boolean): void {
     this.object3D.visible = visible;
+  }
+
+  /** No-op unless an observer getter was supplied - identical shape to
+   *  StarsLayer.update. */
+  update(): void {
+    if (!this.getObserver) return;
+    this.object3D.position.copy(this.getObserver().getFrame().worldPosition);
   }
 
   setRadius(radius: number): void {

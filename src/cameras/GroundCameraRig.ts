@@ -1,21 +1,22 @@
 import * as THREE from "three";
 import type { CameraRig } from "./CameraRig";
 import { GroundLookControls } from "./GroundLookControls";
-import { CELESTIAL_SPHERE_RADIUS } from "../config/constants";
+import { STAR_RADIUS_MAX } from "../config/constants";
 
-// far only needs to comfortably exceed CELESTIAL_SPHERE_RADIUS (the most
-// distant thing ever rendered - stars/Sun/Moon sky markers), not an
-// arbitrary huge number. near stays tiny (close terrain/observer proximity
-// at Ground View's EARTH_RADIUS=5 scale), which makes the near:far RATIO
-// the thing that actually matters for depth-buffer precision - an
-// unnecessarily huge far (this used to be 20000) starves that precision
-// budget, which was silently near/far-clipping nearby things like another
-// observer's marker a couple of units away (see ObserverMarker) even
-// though depthTest is off for it - hardware frustum clipping happens
-// before depthTest ever runs, so no material setting can rescue a point
-// whose clip-space z fell outside [-1,1] due to this precision loss.
+// far only needs to comfortably exceed STAR_RADIUS_MAX (the most distant
+// thing ever rendered, when the Sky radius slider is dialed up to its
+// immersive maximum - stars/Sun/Moon sky markers), not an arbitrary huge
+// number. near stays tiny (close terrain/observer proximity at Ground
+// View's EARTH_RADIUS=5 scale), which makes the near:far RATIO the thing
+// that actually matters for depth-buffer precision - an unnecessarily huge
+// far (this used to be 20000) starves that precision budget, which was
+// silently near/far-clipping nearby things like another observer's marker
+// a couple of units away (see ObserverMarker) even though depthTest is off
+// for it - hardware frustum clipping happens before depthTest ever runs, so
+// no material setting can rescue a point whose clip-space z fell outside
+// [-1,1] due to this precision loss.
 const NEAR = 0.05;
-const FAR = CELESTIAL_SPHERE_RADIUS * 1.25;
+const FAR = STAR_RADIUS_MAX * 1.25;
 
 /**
  * "Standing on Earth" camera. Parented under Earth's ground-station anchor,

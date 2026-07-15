@@ -8,10 +8,11 @@ import { EARTH_AXIAL_TILT_DEG } from "../../astronomy/constants";
  * The fundamental Earth layer: an ocean-colored sphere plus the three
  * nested groups everything else on Earth attaches to:
  *  - `object3D` (orbitGroup): where Earth sits in space - see
- *    setOrbitPosition(), driven by main.ts's "Center: Earth/Sun" toggle
- *    (RenderCenter.ts). Fixed at the origin in Center:Earth mode (every
- *    other system's assumption); carries Earth's real position relative to
- *    the Sun in Center:Sun mode.
+ *    setOrbitPosition(), driven by main.ts's render loop from whether
+ *    Heliocentric is the active astronomy model AND its Real Distance tier
+ *    is on. Fixed at the origin otherwise (every other system's
+ *    assumption); carries Earth's real position relative to the Sun only
+ *    in that one combination.
  *  - `tiltGroup`: fixed axial tilt, settable via setAxialTilt(). Tilts
  *    around a fixed world Z axis - a FIXED direction in the ecliptic/world
  *    frame, not relative to Earth's current orbital position, matching how
@@ -93,8 +94,8 @@ export class EarthBase implements Layer {
    *  personal zenith/alt-az grids - see GroundCameraRig.syncParent and
    *  GroundObserver.getFrame, both of which read the real world-position
    *  chain fresh each frame) to `position` in world space. Called every
-   *  frame from main.ts's render loop, not just on toggle - see
-   *  RenderCenter.ts. */
+   *  frame from main.ts's render loop, not just on toggle - see the
+   *  Heliocentric-active-and-Real-Distance-on branch there. */
   setOrbitPosition(position: Vector3Like): void {
     this.object3D.position.set(position.x, position.y, position.z);
   }

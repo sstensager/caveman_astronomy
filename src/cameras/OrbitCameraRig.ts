@@ -19,10 +19,7 @@ export interface OrbitCameraRigOptions {
 
 /**
  * Free-orbiting camera looking at the world origin. Not attached to any
- * entity, so it stays fixed in world space. Generalized (not Earth-specific)
- * so it can back both Space View (distances relative to EARTH_RADIUS) and
- * the external Celestial Sphere View (distances relative to
- * CELESTIAL_GLOBE_RADIUS) via two differently-configured instances - see
+ * entity, so it stays fixed in world space. Backs Space View - see
  * CameraManager.
  */
 export class OrbitCameraRig implements CameraRig {
@@ -30,9 +27,10 @@ export class OrbitCameraRig implements CameraRig {
   controls: OrbitControls;
   private readonly domElement: HTMLElement;
   private readonly minDistance: number;
-  // NOT readonly - see setMaxDistance(), which lets "Center: Sun" mode's
-  // Earth-Sun distance slider (main.ts) keep the zoom-out range in sync as
-  // the orbit itself grows/shrinks, without needing a full controls rebuild.
+  // NOT readonly - see setMaxDistance(), which lets the Sun & Moon section's
+  // Sun-Earth distance slider (main.ts's setSunDistanceRadii) keep the
+  // zoom-out range in sync as the orbit itself grows/shrinks, without
+  // needing a full controls rebuild.
   private maxDistance: number;
   private upMode: CameraUpMode = CameraUpMode.Equatorial;
 

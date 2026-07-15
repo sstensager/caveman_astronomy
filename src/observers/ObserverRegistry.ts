@@ -3,7 +3,6 @@ import type { GroundObserver } from "./GroundObserver";
 import type { ObserverMarker } from "./ObserverMarker";
 import type { ZenithLayer } from "./ZenithLayer";
 import type { AltAzGridLayer } from "./AltAzGridLayer";
-import type { CompositeLayer } from "../layers/CompositeLayer";
 
 export interface ObserverEntry {
   readonly id: string;
@@ -13,15 +12,11 @@ export interface ObserverEntry {
   readonly marker: ObserverMarker;
   /** Each entry's own zenith/grid, bound to THIS entry's observer (never
    *  "whichever is active") - independently toggleable per observer, see
-   *  main.ts's createObserverEntry. zenith/altAzGrid are the fused
-   *  sky+globe composite (one checkbox); the *Sky/*Globe tiers are kept
-   *  individually too for setRadius calls (see onCelestialSphereRadiusChange). */
-  readonly zenithSky: ZenithLayer;
-  readonly zenithGlobe: ZenithLayer;
-  readonly zenith: CompositeLayer;
-  readonly altAzGridSky: AltAzGridLayer;
-  readonly altAzGridGlobe: AltAzGridLayer;
-  readonly altAzGrid: CompositeLayer;
+   *  main.ts's createObserverEntry. Both track the shared sky radius (see
+   *  main.ts's skyRadius/setSkyRadius) - one instance each, no separate
+   *  sky/globe tier to fuse anymore. */
+  readonly zenith: ZenithLayer;
+  readonly altAzGrid: AltAzGridLayer;
 }
 
 /**

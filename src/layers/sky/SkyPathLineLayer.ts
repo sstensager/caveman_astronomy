@@ -18,8 +18,8 @@ export interface SkyPathLineLayerOptions {
   getModel: () => AstronomyModel;
   getObserver: () => Observer;
   getSimulationTime: () => SimulationTime;
-  /** The sky-tier display radius (see CELESTIAL_SPHERE_RADIUS) - purely a
-   *  display choice, same as CelestialMarkerLayer's sky-tier radius. */
+  /** The shared sky display radius (see config/constants.ts's STAR_RADIUS_*)
+   *  - purely a display choice, same radius the star field itself uses. */
   radius: number;
   color?: number;
   opacity?: number;
@@ -28,24 +28,22 @@ export interface SkyPathLineLayerOptions {
 
 /**
  * The path a body traces across the immersive sky over one full orbital
- * period - e.g. the Sun's ecliptic, or the Moon's apparent path - drawn on
- * the sky tier (see CelestialMarkerLayer's sky-tier instances, which this
- * sits alongside). Unlike OrbitLineLayer (the small explanatory-globe
- * diagram's real-eccentricity ellipse), this is DIRECTION-only: every point
- * on the sky tier sits at the same fixed display radius regardless of a
- * body's actual distance (see projectDirectionToSphere), so a real ellipse
- * shape isn't meaningful here - only the apparent SHAPE the path traces
- * against the fixed stars is. This is exactly the same simplification the
- * sky-tier markers already make.
+ * period - e.g. the Sun's ecliptic, or the Moon's apparent path. Unlike
+ * OrbitLineLayer (the real-eccentricity ellipse drawn around Earth at the
+ * body's current distance scale), this is DIRECTION-only: every point sits
+ * at the same fixed sky radius regardless of the body's actual distance
+ * slider (see projectDirectionToSphere), so a real ellipse shape isn't
+ * meaningful here - only the apparent SHAPE the path traces against the
+ * fixed stars is.
  *
  * Each sampled point is bodyPos - relativeToPos, rotated into world space
  * via eclipticToWorld and normalized - precisely the same computation
  * GroundObserver.getDirectionTo performs, and therefore (see
  * modelEquivalence.test.ts) identical under either AstronomyModel. Offset
  * by the observer's current world position, matching every other
- * observer-centered sky-tier layer (CelestialMarkerLayer's sky instances,
- * AltAzGridLayer, ZenithLayer) - the path is drawn EXACTLY where the body's
- * own marker sits at each sampled instant, never a separate approximation.
+ * observer-centered sky layer (the star field, AltAzGridLayer, ZenithLayer)
+ * - the path is drawn EXACTLY where the body's own marker sits at each
+ * sampled instant, never a separate approximation.
  *
  * Resamples every update() from the CURRENT simulation time, same rationale
  * as OrbitLineLayer: cheap, and keeps the Moon's path honest as its
@@ -101,7 +99,7 @@ export class SkyPathLineLayer implements Layer {
     this.recompute();
   }
 
-  /** Matches CelestialMarkerLayer.setRadius/OrbitLineLayer.setRadius. */
+  /** Matches OrbitLineLayer's own setRadius pattern. */
   setRadius(radius: number): void {
     this.radius = radius;
     this.recompute();

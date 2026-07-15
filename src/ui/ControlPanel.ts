@@ -1,6 +1,5 @@
 import { CameraMode } from "../cameras/CameraMode";
 import { CameraUpMode } from "../cameras/CameraUpMode";
-import { RenderCenter } from "../cameras/RenderCenter";
 import type { HemisphereMode } from "../utils/hemisphereFade";
 import type { StarRecord } from "../astronomy/starCatalog";
 import {
@@ -55,40 +54,21 @@ export interface CameraUpModePanelConfig {
   onSwitchActive: (id: CameraUpMode) => void;
 }
 
-/** One "Center" button ("Center: Earth"/"Center: Sun") - which body sits
- *  fixed at the world origin, see cameras/RenderCenter.ts. Orthogonal to
- *  camera mode and up mode - affects Ground View and Space View alike. */
-export interface RenderCenterEntryDef {
-  id: RenderCenter;
+/** One Scene button ("Heliocentric"/"Geocentric") - the ONE top-level
+ *  choice in the app: which body is treated as fixed at the world origin.
+ *  Every other control (Sun & Moon, Sky, Observer, Earth) is shared,
+ *  persistent state that both Scenes render under - switching here never
+ *  resets or duplicates any of it, so there is nothing else for this
+ *  section to contain. See main.ts's switchScene. */
+export interface SceneEntryDef {
+  id: string;
   label: string;
 }
 
-export interface RenderCenterPanelConfig {
-  entries: RenderCenterEntryDef[];
-  activeId: RenderCenter;
-  onSwitchActive: (id: RenderCenter) => void;
-}
-
-/** One Center mode's own live scale knobs - mirrors the Celestial Sphere
- *  section's radius slider pattern, but for that mode's Sun-Earth/
- *  Moon-Earth distances and Sun/Moon marker sizes (see
- *  config/constants.ts's CENTER_SUN_ and CENTER_EARTH_ DEFAULT_RADII
- *  constants). Same shape for both modes (see
- *  SunAndMoonPanelConfig.realDistance) - each mode's own set is fully
- *  independent, dialing one in never affects the other's. `sunDistance`
- *  reads naturally either way - "how far away is the Sun" - regardless of
- *  whether the Sun or Earth is the one actually moving in that mode. */
-export interface CenterScalePanelConfig {
-  /** Master switch for this mode's own real Sun+Moon markers - OFF by
-   *  default (see main.ts's sunCenteredBodiesVisible/earthCenteredBodiesVisible
-   *  and applyRealBodyVisibility) so switching to, or loading directly
-   *  into, this Center mode doesn't immediately show a body sitting right
-   *  next to Earth unasked. */
-  bodiesVisible: ToggleConfig;
-  sunDistance: SliderConfig;
-  moonDistance: SliderConfig;
-  sunSize: SliderConfig;
-  moonSize: SliderConfig;
+export interface ScenePanelConfig {
+  entries: SceneEntryDef[];
+  activeId: string;
+  onSwitchActive: (id: string) => void;
 }
 
 export interface ScenePresetDef {
@@ -97,63 +77,29 @@ export interface ScenePresetDef {
   onApply: () => void;
 }
 
-/** One model's own explanatory-globe controls - "Heliocentric"/"Geocentric"
- *  today, more later. There is no "active" model anymore (see
- *  AstronomyModelRegistry) - each model's Sun/Moon/orbit-lines are fully
- *  independent toggles, so multiple models' diagrams can be shown at once
- *  to compare them directly. Nested under SunAndMoonPanelConfig.explanatoryGlobe
- *  rather than its own top-level section - every field here is a Sun/Moon
- *  body representation, so it lives with every other tier of the same two
- *  bodies (see SunAndMoonPanelConfig's doc comment). */
-export interface ExplanatoryGlobeModelEntry {
-  id: string;
-  label: string;
+/** The single home for every Sun/Moon control in the app - one Sun, one
+ *  Moon, always, regardless of which Scene is active. Distance/size are
+ *  continuous sliders (Earth-radii units) rather than a fixed set of
+ *  display tiers - drag them down for a small comprehensible diagram, up
+ *  for true-feeling scale; presets (see ScenePresetDef) can dial in
+ *  good-looking combinations. */
+export interface SunAndMoonPanelConfig {
   sun: ToggleConfig;
   moon: ToggleConfig;
+  sunEclipticPath: ToggleConfig;
+  moonSkyPath: ToggleConfig;
+  /** Real elliptical orbit shapes (true eccentricity) around Earth, at the
+   *  bodies' current distance scale - fused under one checkbox. */
   orbitLines: ToggleConfig;
-}
-
-/** A THIRD diagram tier (alongside a model's sky marker and explanatory-globe
- *  marker): the Solar System diagram, where the Sun sits fixed at its own
- *  diagram center and Earth/Moon actually move through real model-space
- *  orbits - see main.ts's buildSolarSystemDiagram. Nested under
- *  SunAndMoonPanelConfig.solarSystemDiagram for the same reason
- *  ExplanatoryGlobeModelEntry is nested there instead of standing alone. */
-export interface SolarSystemDiagramModelEntry {
-  id: string;
-  label: string;
-  bodies: ToggleConfig;
-  earthPath: ToggleConfig;
-}
-
-/** Every Sun/Moon representation in the app, in one place, organized tier-
- *  first (which kind of picture is this - immersive sky, explanatory globe,
- *  solar-system diagram, or true-distance) rather than scattered across
- *  unrelated sections by incidental UI history. Model/mode is a SUB-label
- *  within the two tiers that have one (explanatoryGlobe/solarSystemDiagram
- *  are one entry per registered AstronomyModel; realDistance is one entry
- *  per RenderCenter mode) - this exists specifically so "what moon is that"
- *  always has exactly one place to look. */
-export interface SunAndMoonPanelConfig {
-  /** The always-on immersive sky markers - "what's actually in today's sky",
-   *  not tied to any model's own diagram (driven by a single fixed model,
-   *  see main.ts's groundModel). */
-  sky: {
-    sun: ToggleConfig;
-    moon: ToggleConfig;
-    sunEclipticPath: ToggleConfig;
-    moonSkyPath: ToggleConfig;
-  };
-  explanatoryGlobe: ExplanatoryGlobeModelEntry[];
-  solarSystemDiagram: SolarSystemDiagramModelEntry[];
-  /** The Center:Earth/Center:Sun real-distance bodies - one CenterScalePanelConfig
-   *  per RenderCenter mode, formerly attached to the top View tab strip (see
-   *  CenterScalePanelConfig's doc comment) and moved here since they're just
-   *  another Sun/Moon tier, not a property of the tab strip itself. */
-  realDistance: {
-    earth: CenterScalePanelConfig;
-    sun: CenterScalePanelConfig;
-  };
+  /** Earth's own real elliptical path around the Sun - only visually
+   *  meaningful in Heliocentric (Earth is the body that actually moves
+   *  there); main.ts force-hides it in Geocentric regardless of this
+   *  checkbox's own state. */
+  earthOrbitPath: ToggleConfig;
+  sunDistance: SliderConfig;
+  moonDistance: SliderConfig;
+  sunSize: SliderConfig;
+  moonSize: SliderConfig;
 }
 
 export interface ObserverEntryDef {
@@ -185,18 +131,26 @@ export interface ObserverPanelConfig {
   observerToggles: ObserverEntryPanelConfig[];
 }
 
+/** The ONE sky/celestial-sphere tier - stars, constellations, the
+ *  wireframe shell, all sharing one live-adjustable radius (see
+ *  config/constants.ts's STAR_RADIUS_* doc comment). Shrink it for a small,
+ *  easy-to-reason-about celestial-sphere demonstration; grow it for an
+ *  immersive backdrop. There used to be two entirely separate tiers here
+ *  ("Background Stars" and "Celestial Sphere") each with its own duplicated
+ *  controls - collapsed to one. */
+export interface SkyPanelConfig {
+  radius: SliderConfig;
+  shellVisible: ToggleConfig;
+  wireframeOpacity: SliderConfig;
+  onHemisphereModeChange: (mode: HemisphereMode) => void;
+  stars: StarSystemConfig;
+  constellationLines: ToggleConfig;
+  constellationNames: ToggleConfig;
+}
+
 export interface ControlPanelConfig {
-  /** Top-level "which body is fixed" tab strip - the very first thing in
-   *  the panel (see the constructor). A bare mode switch: everything else
-   *  in this config is Center-mode-agnostic (Ground View, WASD, Sun & Moon,
-   *  Sky content etc. all already work identically regardless of which tab
-   *  is active - confirmed when this was built), and even the Center-mode-
-   *  SPECIFIC real-distance bodies live under `sunAndMoon.realDistance`
-   *  rather than here - see SunAndMoonPanelConfig's doc comment for why. */
-  view: {
-    renderCenter: RenderCenterPanelConfig;
-  };
-  scene: {
+  scene: ScenePanelConfig;
+  presets: {
     presets: ScenePresetDef[];
   };
   earth: {
@@ -207,26 +161,7 @@ export interface ControlPanelConfig {
     axialTilt: SliderConfig;
   };
   sunAndMoon: SunAndMoonPanelConfig;
-  celestialSphere: {
-    visible: ToggleConfig;
-    wireframeOpacity: SliderConfig;
-    radius: SliderConfig;
-    onHemisphereModeChange: (mode: HemisphereMode) => void;
-  };
-  /** Constellation toggles live INSIDE each star config below (adjacent to
-   *  that tier's own star sliders) rather than as a standalone section -
-   *  they're always an annotation on top of one specific star layer, never
-   *  an independent thing, so "sky-tier constellations" sits next to
-   *  Background Stars' own controls and "globe-tier constellations" sits
-   *  next to Celestial Sphere's own Stars controls. Still fully independent
-   *  of star visibility itself (constellation data is resolved once against
-   *  the shared catalog at load, not derived from what's currently drawn -
-   *  see constellationCatalog.ts) - adjacency here is about where the
-   *  control LIVES, not a dependency between the two. */
-  stars: {
-    background: StarSystemConfig & { constellationLines: ToggleConfig; constellationNames: ToggleConfig };
-    celestialSphere: StarSystemConfig & { constellationLines: ToggleConfig; constellationNames: ToggleConfig };
-  };
+  sky: SkyPanelConfig;
   observer: ObserverPanelConfig;
   camera: {
     viewModes: ViewModeDef[];
@@ -263,25 +198,23 @@ function formatDecDegrees(decDeg: number): string {
 
 /**
  * Plain-DOM control panel overlay, organized into collapsible sections that
- * mirror the app's visual hierarchy (View tab strip -> Scene -> Earth ->
- * Sun & Moon (every Sun/Moon tier - sky, explanatory globe, solar system
- * diagram, real distance - in one place) -> Sky (Celestial Sphere,
- * Background Stars, each with its own adjacent constellation toggles) ->
- * Observer -> Selected Star -> Camera -> Time). Sun & Moon (which rule
- * system governs body motion, and every resulting representation of the
- * two bodies) and Camera (which view displays the result) are deliberately
- * separate, independent sections - see AstronomyModelRegistry in main.ts.
- * Deliberately dumb: it only renders inputs and reports changes via
- * callbacks in `ControlPanelConfig` - main.ts remains the composition root
- * that wires those callbacks to layers/clock/camera.
+ * mirror the app's visual hierarchy (Scene tab strip -> Presets -> Earth ->
+ * Sun & Moon -> Sky (Celestial Sphere/Stars/Constellations, one shared
+ * radius) -> Observer -> Selected Star -> Camera -> Time). Scene is the ONE
+ * top-level choice (Geocentric/Heliocentric - see ScenePanelConfig's doc
+ * comment) - everything else is shared, persistent state that both Scenes
+ * render under. Deliberately dumb: it only renders inputs and reports
+ * changes via callbacks in `ControlPanelConfig` - main.ts remains the
+ * composition root that wires those callbacks to layers/clock/camera.
  */
 export class ControlPanel {
   readonly element: HTMLElement;
   private readonly viewButtons: Partial<Record<CameraMode, HTMLButtonElement>> = {};
   private readonly upModeButtons: Partial<Record<CameraUpMode, HTMLButtonElement>> = {};
-  private readonly viewTabButtons: Partial<Record<RenderCenter, HTMLButtonElement>> = {};
+  private readonly sceneButtons: Record<string, HTMLButtonElement> = {};
   private readonly observerButtons: Record<string, HTMLButtonElement> = {};
   private readonly layerCheckboxes: Record<string, HTMLInputElement> = {};
+  private readonly sliders: Record<string, HTMLInputElement> = {};
   private readonly selectedStarBody: HTMLElement;
   private selectedStarSection?: HTMLDetailsElement;
   private observerSwitcherElement?: HTMLElement;
@@ -295,8 +228,8 @@ export class ControlPanel {
 
     this.selectedStarBody = document.createElement("div");
 
-    this.element.appendChild(this.buildViewSection(config));
     this.element.appendChild(this.buildSceneSection(config));
+    this.element.appendChild(this.buildPresetsSection(config));
     this.element.appendChild(this.buildEarthSection(config));
     this.element.appendChild(this.buildSunAndMoonSection(config));
     this.element.appendChild(this.buildSkySection(config));
@@ -320,14 +253,13 @@ export class ControlPanel {
     }
   }
 
-  /** Switches the top-level View tab's active button state. Purely a mode
-   *  switch now - the Scale sliders that used to live under each tab moved
-   *  into the Sun & Moon section's "Real Distance" tier (see
-   *  SunAndMoonPanelConfig.realDistance), so there's no per-tab content to
-   *  swap here anymore. */
-  setActiveRenderCenter(mode: RenderCenter): void {
-    for (const [buttonMode, button] of Object.entries(this.viewTabButtons)) {
-      button?.classList.toggle("active", buttonMode === mode);
+  /** Switches the top-level Scene tab strip's active button state. Unlike
+   *  the old per-model "Real Distance" tier, nothing else needs rebuilding
+   *  here - every Sun & Moon/Sky/Observer control is shared state, not
+   *  per-Scene. */
+  setActiveScene(id: string): void {
+    for (const [entryId, button] of Object.entries(this.sceneButtons)) {
+      button.classList.toggle("active", entryId === id);
     }
   }
 
@@ -339,8 +271,7 @@ export class ControlPanel {
 
   /** Appends a new observer button to the switcher - used when "Add
    *  Observer" creates a new entry at runtime, since the switcher's button
-   *  list isn't fixed at construction like the Camera/Astronomy Model
-   *  sections' are. */
+   *  list isn't fixed at construction like the Camera/Scene sections' are. */
   addObserverButton(entry: ObserverEntryDef): void {
     if (!this.observerSwitcherElement || !this.onSwitchActiveObserver) return;
     const button = document.createElement("button");
@@ -388,6 +319,23 @@ export class ControlPanel {
     }
   }
 
+  /** Reflects a programmatic slider change (e.g. a scene preset's
+   *  skyRadius/sunDistanceRadii/moonDistanceRadii override) in the slider
+   *  UI - re-dispatches a real "input" event (same pattern as the Earth
+   *  section's axial-tilt reset button) so the value label text updates
+   *  too, not just the thumb position. Re-invoking that slider's own
+   *  onChange this way is redundant with the preset having already applied
+   *  the value directly, but harmless (pure idempotent setters). */
+  syncSliders(values: Partial<Record<string, number>>): void {
+    for (const [id, value] of Object.entries(values)) {
+      if (value === undefined) continue;
+      const input = this.sliders[id];
+      if (!input) continue;
+      input.value = String(value);
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+  }
+
   /** Reflects a click-to-select star pick (see StarPicker) in the "Selected
    *  Star" readout - the panel has no input control of its own for this,
    *  the state always originates from a 3D-scene interaction. A successful
@@ -423,19 +371,43 @@ export class ControlPanel {
     return checkbox;
   }
 
+  private registerSlider(id: string, slider: { element: HTMLElement; input: HTMLInputElement }): { element: HTMLElement; input: HTMLInputElement } {
+    this.sliders[id] = slider.input;
+    return slider;
+  }
+
+  /** The top-level "which body is fixed at the world origin" tab strip -
+   *  see ScenePanelConfig's doc comment. A bare mode switch with no content
+   *  of its own; every other control lives in its own section below,
+   *  shared across both Scenes. */
   private buildSceneSection(config: ControlPanelConfig): HTMLElement {
+    const { element: tabBar, buttons: tabButtons } = createButtonGroup(
+      config.scene.entries.map((entry) => ({
+        key: entry.id,
+        label: entry.label,
+        onClick: () => config.scene.onSwitchActive(entry.id),
+      })),
+    );
+    for (const [id, button] of Object.entries(tabButtons)) {
+      this.sceneButtons[id] = button;
+    }
+    this.setActiveScene(config.scene.activeId);
+
+    const section = document.createElement("div");
+    section.className = "control-view-section";
+    section.append(tabBar);
+    return section;
+  }
+
+  private buildPresetsSection(config: ControlPanelConfig): HTMLElement {
     const { element } = createButtonGroup(
-      config.scene.presets.map((preset) => ({ key: preset.id, label: preset.label, onClick: preset.onApply })),
+      config.presets.presets.map((preset) => ({ key: preset.id, label: preset.label, onClick: preset.onApply })),
     );
     const presetGrid = document.createElement("div");
     presetGrid.className = "control-preset-grid";
     presetGrid.appendChild(element);
 
-    return createSection("Scene", true, [
-      presetGrid,
-      createPlaceholder("Background - coming soon"),
-      createPlaceholder("Lighting - coming soon"),
-    ]);
+    return createSection("Presets", true, [presetGrid]);
   }
 
   private buildEarthSection(config: ControlPanelConfig): HTMLElement {
@@ -461,82 +433,37 @@ export class ControlPanel {
     return createSection("Earth", true, content);
   }
 
-  /** The single home for every Sun/Moon representation in the app - see
-   *  SunAndMoonPanelConfig's doc comment for why this exists (previously
-   *  scattered across "Astronomy Model," "Sky > Sun & Moon," and the top
-   *  View tab strip). Organized tier-first via createSubsectionHeading
-   *  (Sky / Explanatory Globe / Solar System Diagram / Real Distance), with
-   *  model/mode as a nested <details> sub-label only within the tiers that
-   *  have more than one (no "active" model - see AstronomyModelRegistry -
-   *  so every model's diagram is independently toggleable, same as before
-   *  this reorg). Layer ids here (`${id}SunMarkerGlobe` etc.) must match the
-   *  naming buildModelDiagram/buildSolarSystemDiagram use in main.ts. */
+  /** The single home for every Sun/Moon control - see SunAndMoonPanelConfig's
+   *  doc comment. One Sun, one Moon, always: no per-Scene or per-tier
+   *  sub-sections to disambiguate between. */
   private buildSunAndMoonSection(config: ControlPanelConfig): HTMLElement {
     const sm = config.sunAndMoon;
 
-    const buildRealDistanceContent = (scale: CenterScalePanelConfig, visibleId: string): HTMLElement[] => [
-      this.registerLayerCheckbox(visibleId, createCheckbox("Show Real Sun & Moon", scale.bodiesVisible.checked, scale.bodiesVisible.onChange))
-        .element,
-      createSlider({ ...scale.sunDistance, label: "Sun-Earth Distance" }).element,
-      createSlider({ ...scale.moonDistance, label: "Moon-Earth Distance" }).element,
-      createSlider({ ...scale.sunSize, label: "Sun Size" }).element,
-      createSlider({ ...scale.moonSize, label: "Moon Size" }).element,
-    ];
-
     return createSection("Sun & Moon", true, [
-      createSubsectionHeading("Sky"),
-      this.registerLayerCheckbox("sunMarkerSky", createCheckbox("Sun visible", sm.sky.sun.checked, sm.sky.sun.onChange)).element,
-      this.registerLayerCheckbox("moonMarkerSky", createCheckbox("Moon visible", sm.sky.moon.checked, sm.sky.moon.onChange)).element,
+      this.registerLayerCheckbox("sunMarker", createCheckbox("Sun visible", sm.sun.checked, sm.sun.onChange)).element,
+      this.registerLayerCheckbox("moonMarker", createCheckbox("Moon visible", sm.moon.checked, sm.moon.onChange)).element,
       this.registerLayerCheckbox(
         "sunEclipticPath",
-        createCheckbox("Sun Ecliptic Path", sm.sky.sunEclipticPath.checked, sm.sky.sunEclipticPath.onChange),
+        createCheckbox("Sun Ecliptic Path", sm.sunEclipticPath.checked, sm.sunEclipticPath.onChange),
       ).element,
       this.registerLayerCheckbox(
         "moonSkyPath",
-        createCheckbox("Moon Sky Path", sm.sky.moonSkyPath.checked, sm.sky.moonSkyPath.onChange),
+        createCheckbox("Moon Sky Path", sm.moonSkyPath.checked, sm.moonSkyPath.onChange),
+      ).element,
+      this.registerLayerCheckbox(
+        "orbitLines",
+        createCheckbox("Show Orbit Lines", sm.orbitLines.checked, sm.orbitLines.onChange),
+      ).element,
+      this.registerLayerCheckbox(
+        "earthOrbitLine",
+        createCheckbox("Show Earth's Orbital Path (Heliocentric)", sm.earthOrbitPath.checked, sm.earthOrbitPath.onChange),
       ).element,
 
-      createSubsectionHeading("Explanatory Globe"),
-      ...sm.explanatoryGlobe.map((entry) =>
-        createSection(entry.label, false, [
-          this.registerLayerCheckbox(`${entry.id}SunMarkerGlobe`, createCheckbox("Sun visible", entry.sun.checked, entry.sun.onChange))
-            .element,
-          this.registerLayerCheckbox(`${entry.id}MoonMarkerGlobe`, createCheckbox("Moon visible", entry.moon.checked, entry.moon.onChange))
-            .element,
-          this.registerLayerCheckbox(
-            `${entry.id}OrbitLines`,
-            createCheckbox("Show Orbital Lines", entry.orbitLines.checked, entry.orbitLines.onChange),
-          ).element,
-        ]),
-      ),
-
-      createSubsectionHeading("Solar System Diagram"),
-      ...sm.solarSystemDiagram.map((entry) =>
-        createSection(entry.label, false, [
-          this.registerLayerCheckbox(
-            `${entry.id}SolarSystemBodies`,
-            createCheckbox("Show Sun/Earth/Moon orbiting", entry.bodies.checked, entry.bodies.onChange),
-          ).element,
-          this.registerLayerCheckbox(
-            `${entry.id}SolarSystemEarthPath`,
-            createCheckbox("Show Earth's Orbital Path", entry.earthPath.checked, entry.earthPath.onChange),
-          ).element,
-        ]),
-      ),
-
-      createSubsectionHeading("Real Distance"),
-      createSection(
-        config.view.renderCenter.entries.find((e) => e.id === RenderCenter.Earth)!.label,
-        false,
-        buildRealDistanceContent(sm.realDistance.earth, "earthCenteredBodiesVisible"),
-      ),
-      createSection(
-        config.view.renderCenter.entries.find((e) => e.id === RenderCenter.Sun)!.label,
-        false,
-        buildRealDistanceContent(sm.realDistance.sun, "sunCenteredBodiesVisible"),
-      ),
-
-      createPlaceholder("Model paths - coming soon."),
+      createSubsectionHeading("Distance & Size"),
+      this.registerSlider("sunDistanceRadii", createSlider({ ...sm.sunDistance, label: "Sun-Earth Distance" })).element,
+      this.registerSlider("moonDistanceRadii", createSlider({ ...sm.moonDistance, label: "Moon-Earth Distance" })).element,
+      createSlider({ ...sm.sunSize, label: "Sun Size" }).element,
+      createSlider({ ...sm.moonSize, label: "Moon Size" }).element,
     ]);
   }
 
@@ -586,30 +513,20 @@ export class ControlPanel {
     return createSection("Observer", false, content);
   }
 
-  /** The starry backdrop - the celestial sphere diagram and both star
-   *  fields - nested one level under a single "Sky" accordion instead of
-   *  standing as separate top-level sections. Each star field carries its
-   *  own constellation toggles directly (see buildCelestialSphereSection/
-   *  buildBackgroundStarsSection) rather than constellations having a
-   *  section of their own, since they're always an annotation on top of one
-   *  specific star layer, never an independent thing. */
+  /** The ONE sky tier - see SkyPanelConfig's doc comment. Radius spans
+   *  "small comprehensible diagram" to "immersive infinite backdrop"; stars
+   *  and constellations share it, no separate sub-tiers. */
   private buildSkySection(config: ControlPanelConfig): HTMLElement {
-    return createSection("Sky", true, [this.buildCelestialSphereSection(config), this.buildBackgroundStarsSection(config)]);
-  }
+    const sky = config.sky;
 
-  private buildCelestialSphereSection(config: ControlPanelConfig): HTMLElement {
-    const cs = config.celestialSphere;
-
-    const visible = this.registerLayerCheckbox(
+    const shellVisible = this.registerLayerCheckbox(
       "celestialSphereShell",
-      createCheckbox("Visible", cs.visible.checked, cs.visible.onChange),
+      createCheckbox("Show Celestial Sphere Shell", sky.shellVisible.checked, sky.shellVisible.onChange),
     );
 
     // Obscures the NEAR hemisphere (facing the external camera) rather than
     // the far one: the near side sits visually between the camera and
-    // Earth, cluttering the view - hiding it and keeping the far side is
-    // the more useful/recognizable default for this outside-looking-in
-    // view. See hemisphereFadeFactor for the actual near/far math.
+    // Earth, cluttering the view.
     const hide = createCheckbox("Hide near hemisphere", false, (checked) => {
       if (checked) fade.input.checked = false;
       applyHemisphereMode();
@@ -620,123 +537,56 @@ export class ControlPanel {
     });
     const applyHemisphereMode = (): void => {
       const mode: HemisphereMode = hide.input.checked ? "hide" : fade.input.checked ? "fade" : "none";
-      cs.onHemisphereModeChange(mode);
+      sky.onHemisphereModeChange(mode);
     };
 
-    const content = [
-      visible.element,
-      createSlider({ ...cs.wireframeOpacity, label: "Wireframe Opacity", format: cs.wireframeOpacity.format ?? percentFormat }).element,
-      createSlider({ ...cs.radius, label: "Radius" }).element,
-      hide.element,
-      fade.element,
-      createSubsectionHeading("Stars"),
-      ...this.buildStarSystemControls("celestialSphereStars", config.stars.celestialSphere, { showAllButton: true }),
-      createSubsectionHeading("Constellations"),
-      ...this.buildConstellationControls("constellationLinesGlobe", "constellationNamesGlobe", config.stars.celestialSphere),
-    ];
-    return createSection("Celestial Sphere", false, content);
-  }
-
-  private buildStarSystemControls(
-    layerId: string,
-    star: StarSystemConfig,
-    options?: { showAllButton?: boolean },
-  ): HTMLElement[] {
-    const visible = this.registerLayerCheckbox(layerId, createCheckbox("Visible", star.visible.checked, star.visible.onChange));
+    const starVisible = this.registerLayerCheckbox("stars", createCheckbox("Stars visible", sky.stars.visible.checked, sky.stars.visible.onChange));
     const magnitudeSlider = createSlider({
-      ...star.limitingMagnitude,
+      ...sky.stars.limitingMagnitude,
       label: "Limiting Magnitude",
-      format: star.limitingMagnitude.format ?? ((v) => v.toFixed(1)),
+      format: sky.stars.limitingMagnitude.format ?? ((v) => v.toFixed(1)),
+    });
+    const showAllButton = document.createElement("button");
+    showAllButton.type = "button";
+    showAllButton.className = "control-button";
+    showAllButton.textContent = "Show All Stars";
+    showAllButton.addEventListener("click", () => {
+      magnitudeSlider.input.value = String(sky.stars.limitingMagnitude.max);
+      magnitudeSlider.input.dispatchEvent(new Event("input"));
     });
 
-    const elements = [
-      visible.element,
-      magnitudeSlider.element,
-      createSlider({ ...star.brightness, label: "Brightness", format: star.brightness.format ?? percentFormat }).element,
-      createSlider({ ...star.size, label: "Size" }).element,
-      createSlider({ ...star.opacity, label: "Opacity", format: star.opacity.format ?? percentFormat }).element,
-    ];
-
-    if (options?.showAllButton) {
-      const showAllButton = document.createElement("button");
-      showAllButton.type = "button";
-      showAllButton.className = "control-button";
-      showAllButton.textContent = "Show All Stars";
-      showAllButton.addEventListener("click", () => {
-        magnitudeSlider.input.value = String(star.limitingMagnitude.max);
-        magnitudeSlider.input.dispatchEvent(new Event("input"));
-      });
-      elements.push(showAllButton);
-    }
-
-    return elements;
-  }
-
-  private buildBackgroundStarsSection(config: ControlPanelConfig): HTMLElement {
     const content = [
-      ...this.buildStarSystemControls("backgroundStars", config.stars.background),
-      createSubsectionHeading("Constellations"),
-      ...this.buildConstellationControls("constellationLinesSky", "constellationNamesSky", config.stars.background),
-    ];
-    return createSection("Background Stars", false, content);
-  }
+      this.registerSlider("skyRadius", createSlider({ ...sky.radius, label: "Sky Radius" })).element,
+      shellVisible.element,
+      createSlider({ ...sky.wireframeOpacity, label: "Shell Wireframe Opacity", format: sky.wireframeOpacity.format ?? percentFormat }).element,
+      hide.element,
+      fade.element,
 
-  /** Independent of the star toggles it sits next to - turning stars off
-   *  doesn't destroy constellation data (it's resolved once against the
-   *  shared catalog at load, not derived from what's currently drawn - see
-   *  constellationCatalog.ts), and turning constellation lines/names off
-   *  doesn't affect stars either. Adjacency here is about where the control
-   *  lives (next to the star layer it overlays), not a dependency between
-   *  the two - see ControlPanelConfig.stars' doc comment. Called once for
-   *  the sky-tier pair (from buildBackgroundStarsSection) and once for the
-   *  globe-tier pair (from buildCelestialSphereSection), since "show
-   *  constellations in the immersive sky" and "show them on the small
-   *  explanatory globe" are independent teaching choices. */
-  private buildConstellationControls(
-    linesId: string,
-    namesId: string,
-    config: { constellationLines: ToggleConfig; constellationNames: ToggleConfig },
-  ): HTMLElement[] {
-    return [
-      this.registerLayerCheckbox(linesId, createCheckbox("Constellation Lines", config.constellationLines.checked, config.constellationLines.onChange))
-        .element,
-      this.registerLayerCheckbox(namesId, createCheckbox("Constellation Names", config.constellationNames.checked, config.constellationNames.onChange))
-        .element,
+      createSubsectionHeading("Stars"),
+      starVisible.element,
+      magnitudeSlider.element,
+      createSlider({ ...sky.stars.brightness, label: "Brightness", format: sky.stars.brightness.format ?? percentFormat }).element,
+      createSlider({ ...sky.stars.size, label: "Size" }).element,
+      createSlider({ ...sky.stars.opacity, label: "Opacity", format: sky.stars.opacity.format ?? percentFormat }).element,
+      showAllButton,
+
+      createSubsectionHeading("Constellations"),
+      this.registerLayerCheckbox(
+        "constellationLines",
+        createCheckbox("Constellation Lines", sky.constellationLines.checked, sky.constellationLines.onChange),
+      ).element,
+      this.registerLayerCheckbox(
+        "constellationNames",
+        createCheckbox("Constellation Names", sky.constellationNames.checked, sky.constellationNames.onChange),
+      ).element,
     ];
+    return createSection("Sky", true, content);
   }
 
   private buildSelectedStarSection(): HTMLElement {
     this.setSelectedStarInfo(undefined);
     const section = createSection("Selected Star", true, [this.selectedStarBody]);
     this.selectedStarSection = section;
-    return section;
-  }
-
-  /** The top-level "which body is fixed" tab strip - see
-   *  ControlPanelConfig.view's doc comment for why this lives outside/
-   *  above every other section instead of nested in Camera. A bare mode
-   *  switch now - the per-mode Scale sliders + "Show Real Sun & Moon"
-   *  checkbox that used to render under each tab live in the Sun & Moon
-   *  section's "Real Distance" tier instead (see buildSunAndMoonSection),
-   *  so there's no per-tab content to build here anymore. */
-  private buildViewSection(config: ControlPanelConfig): HTMLElement {
-    const view = config.view;
-
-    const { element: tabBar, buttons: tabButtons } = createButtonGroup(
-      view.renderCenter.entries.map((entry) => ({
-        key: entry.id,
-        label: entry.label,
-        onClick: () => view.renderCenter.onSwitchActive(entry.id),
-      })),
-    );
-    for (const [id, button] of Object.entries(tabButtons)) {
-      this.viewTabButtons[id as RenderCenter] = button;
-    }
-    this.setActiveRenderCenter(view.renderCenter.activeId);
-
-    const section = document.createElement("div");
-    section.className = "control-view-section";
-    section.append(tabBar);
     return section;
   }
 

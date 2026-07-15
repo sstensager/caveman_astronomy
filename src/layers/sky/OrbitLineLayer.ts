@@ -20,11 +20,12 @@ export interface OrbitLineLayerOptions {
   semiMajorAxis: number;
   getModel: () => AstronomyModel;
   getSimulationTime: () => SimulationTime;
-  /** The globe's current display radius (see CELESTIAL_GLOBE_RADIUS/setRadius). */
+  /** Current display radius, in the SAME local units the corresponding
+   *  OrbitingBodyMarkerLayer's getPosition() returns (see setRadius). */
   radius: number;
-  /** Fraction of `radius` the semi-major axis maps to - pass the SAME fraction the
-   *  corresponding CelestialMarkerLayer globe instance uses (orbitRadiusFraction) so
-   *  the line and its marker read as one diagram. */
+  /** Fraction of `radius` the semi-major axis maps to - pass the SAME
+   *  scale the corresponding OrbitingBodyMarkerLayer's getPosition() uses
+   *  so the line and its marker read as one diagram. */
   orbitRadiusFraction: number;
   color?: number;
   opacity?: number;
@@ -33,9 +34,10 @@ export interface OrbitLineLayerOptions {
 
 /**
  * A closed ellipse tracing a body's real orbital path relative to another
- * body - e.g. the Sun's path around Earth, or the Moon's path around Earth -
- * drawn on the "explanatory globe" tier (see CelestialMarkerLayer's globe
- * instances, which this is meant to sit alongside).
+ * body - e.g. the Sun's path around Earth, the Moon's path around Earth, or
+ * Earth's own path around the Sun - meant to sit alongside the
+ * corresponding OrbitingBodyMarkerLayer instance (see main.ts's
+ * sunOrbitLine/moonOrbitLine/earthOrbitLine).
  *
  * Deliberately reads bodyPos - relativeToPos from the active model's raw
  * getState() output rather than Observer.getDirectionTo() - unlike the
@@ -111,8 +113,9 @@ export class OrbitLineLayer implements Layer {
     this.recompute();
   }
 
-  /** Matches CelestialMarkerLayer.setRadius - keeps the line's scale in sync
-   *  when the globe's display radius changes (see onCelestialSphereRadiusChange). */
+  /** Keeps the ellipse's scale in sync when the corresponding body's
+   *  distance slider changes (see main.ts's setSunDistanceRadii/
+   *  setMoonDistanceRadii). */
   setRadius(radius: number): void {
     this.radius = radius;
     this.recompute();
