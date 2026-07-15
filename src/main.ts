@@ -47,6 +47,9 @@ import {
   DEFAULT_LATITUDE_DEG,
   EARTH_RADIUS,
   DEFAULT_LONGITUDE_DEG,
+  MOON_DARK_SIDE_BRIGHTNESS_DEFAULT,
+  MOON_DARK_SIDE_BRIGHTNESS_MIN,
+  MOON_DARK_SIDE_BRIGHTNESS_MAX,
   MOON_DISTANCE_DEFAULT_RADII,
   MOON_DISTANCE_MIN_RADII,
   MOON_DISTANCE_MAX_RADII,
@@ -340,6 +343,7 @@ const moonMarker = new OrbitingBodyMarkerLayer({
   textureUrl: "/textures/moon1.png",
   spinMode: "tidalLocked",
   lit: true,
+  darkSideBrightness: MOON_DARK_SIDE_BRIGHTNESS_DEFAULT,
   getPosition: () =>
     getMoonOffsetFromEarth(getActiveModel().getState(getSimulationTime()), (EARTH_RADIUS * moonDistanceRadii) / MOON_ORBIT_RADIUS),
 });
@@ -698,6 +702,18 @@ const panelConfig: ControlPanelConfig = {
       format: (v: number) => `${v.toFixed(2)} R⊕`,
       onChange: (v: number) => moonMarker.setMarkerSize(EARTH_RADIUS * v),
     },
+    moonDarkSideBrightness: {
+      value: MOON_DARK_SIDE_BRIGHTNESS_DEFAULT,
+      min: MOON_DARK_SIDE_BRIGHTNESS_MIN,
+      max: MOON_DARK_SIDE_BRIGHTNESS_MAX,
+      step: MOON_DARK_SIDE_BRIGHTNESS_MAX / 100,
+      // Percent OF THE SLIDER'S OWN RANGE (not the raw linear value) - 100%
+      // always lands at MAX regardless of how that constant gets retuned.
+      // See MOON_DARK_SIDE_BRIGHTNESS_MAX's doc comment for why the raw
+      // value itself is kept so small (sRGB gamma).
+      format: (v: number) => `${Math.round((v / MOON_DARK_SIDE_BRIGHTNESS_MAX) * 100)}%`,
+      onChange: (v: number) => moonMarker.setDarkSideBrightness(v),
+    },
   },
   observer: {
     entries: observerRegistry.all().map((entry) => ({ id: entry.id, label: entry.label })),
@@ -861,6 +877,12 @@ renderer.setAnimationLoop(() => {
   sunLightDirection.set(sunDirectionWorld.x, sunDirectionWorld.y, sunDirectionWorld.z).normalize();
   keyLight.position.copy(sunLightDirection).multiplyScalar(EARTH_RADIUS * 20);
   continents.setSunDirection(sunLightDirection);
+  // Sun-Earth direction reused directly for the Moon's own phase shading
+  // (see OrbitingBodyMarkerLayer.setDarkSideLightDirection) - Earth-Moon
+  // distance is negligible next to Earth-Sun distance, so the Sun-Moon
+  // direction is imperceptibly different from this, same approximation the
+  // Moon's lighting already relied on via the shared scene keyLight before.
+  moonMarker.setDarkSideLightDirection(sunLightDirection);
 
   const activeLatLon = observerRegistry.getActive().station.getLatLon();
   controlPanel.setObserverLatLon(activeLatLon.latDeg, activeLatLon.lonDeg);

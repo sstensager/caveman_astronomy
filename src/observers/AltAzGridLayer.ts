@@ -8,11 +8,15 @@ const ALTITUDE_CIRCLE_SEGMENTS = 48;
 const AZIMUTH_MERIDIAN_COUNT = 8;
 const AZIMUTH_MERIDIAN_SEGMENTS = 12;
 
-// Compass-letter sprite size as a fraction of the grid's own radius - much
-// larger than a body marker's size ratio (see CELESTIAL_MARKER_SIZE_RATIO)
-// since a single letter needs to read clearly at a glance, not just as a
-// dot.
-const COMPASS_LABEL_SIZE_RATIO = 0.35;
+// Compass-letter sprite size as a fraction of the grid's own radius. Since
+// the letters sit AT `radius` distance from the observer (on the horizon
+// circle) and Ground View's camera sits AT the observer, this ratio is
+// approximately the letter's own angular size in the view (size/distance
+// cancels the radius) - independent of whatever ALT_AZ_DOME_RADIUS happens
+// to be. ~0.06 rad is roughly 3.5 degrees, comfortably readable up close
+// without dominating the view (0.35 here previously produced letters
+// spanning a good fraction of the whole screen in Ground View).
+const COMPASS_LABEL_SIZE_RATIO = 0.06;
 
 /** createLabelTexture's default canvas (256x64) is tuned for word-shaped
  *  constellation names - a single compass letter drawn centered on it would
@@ -181,6 +185,20 @@ export class AltAzGridLayer implements Layer {
     }
 
     positions.needsUpdate = true;
+    // REQUIRED, not just good practice: this object3D's own transform stays
+    // at identity forever (every position above is written directly into
+    // world-space vertex data, never via object3D.position) - unlike a
+    // transform-based mover, Three.js has no other signal that this
+    // geometry's shape changed. Its `geometry.boundingSphere` gets
+    // lazily auto-computed ONCE, on the very first frustum-culling check,
+    // then never again - without this call, that first frame's (whatever
+    // it happened to be, e.g. the default observer's initial position)
+    // bounding sphere stays cached forever, and the whole grid silently
+    // stops rendering (frustum-culled as "out of view") the moment the
+    // observer walks far enough that the camera's frustum no longer
+    // overlaps that stale sphere, even though the grid itself is right
+    // there. See OrbitLineLayer/SkyPathLineLayer for the same pattern.
+    this.object3D.geometry.computeBoundingSphere();
   }
 
   setVisible(visible: boolean): void {

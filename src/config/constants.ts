@@ -30,12 +30,14 @@ export const STAR_RADIUS_MAX = 2000;
 // ground mesh instead of intersecting it.
 export const ALT_AZ_DOME_RADIUS = EARTH_RADIUS * 0.06;
 
-// The zenith marker's own dot size, in world units - deliberately a FIXED
-// absolute size, independent of the (now sky-radius-scale, up to 2000)
-// `radius` its point/line project to - see ZenithLayer's doc comment for
-// why decoupling these two was necessary once the zenith line started
-// reaching out to the shared sky radius instead of a small fixed value.
-export const ZENITH_DOT_SIZE = EARTH_RADIUS * 0.015;
+// The zenith marker's own dot size - a constant-screen-space Sprite scale
+// (sizeAttenuation:false), NOT world units, and NOT derived from
+// EARTH_RADIUS - a real-world-sized marker would shrink to an invisible
+// sub-pixel speck once `radius` (the line/point's distance, now the shared
+// sky radius, up to 2000) is large. See ZenithLayer's class doc comment for
+// why the dot has to be a screen-space-constant point like a star instead
+// of a true-scale sphere.
+export const ZENITH_DOT_SIZE = 0.012;
 
 export const STARS_DEFAULT = {
   limitingMagnitude: 6.5,
@@ -157,6 +159,25 @@ export const MOON_SIZE_MAX_RADII = 3;
 // OrbitingBodyMarkerLayer.setMarkerSize() (wired to the sliders), not these.
 export const SUN_MARKER_SIZE_DEFAULT = EARTH_RADIUS * SUN_SIZE_DEFAULT_RADII;
 export const MOON_MARKER_SIZE_DEFAULT = EARTH_RADIUS * MOON_SIZE_DEFAULT_RADII;
+
+// How bright the Moon's own dark (unlit) side reads, as a flat LINEAR
+// multiplier on its diffuse texture color, applied before the renderer's
+// own sRGB output encoding - independent of the scene's global AmbientLight
+// (which also sets Earth's own night-side floor and shouldn't be coupled to
+// this). Kept deliberately tiny (MAX two orders of magnitude below 1) because
+// sRGB gamma makes linear multipliers look far brighter than their raw value
+// suggests - a v0 range up to 0.3 meant the whole USEFUL part of the slider
+// (black to "clearly visible gray") lived in its bottom ~2%, with everything
+// above that looking about equally "bright" to the eye. 0 is basically
+// black; MAX is "mostly dark" but still a visible gray sphere - the point of
+// the slider is selling the crescent/gibbous phases by making the
+// terminator's contrast fully adjustable. See
+// OrbitingBodyMarkerLayer.setDarkSideBrightness; main.ts's slider format
+// displays this as a percentage of MAX, not the raw value, so 100% always
+// lands at whatever MAX is tuned to.
+export const MOON_DARK_SIDE_BRIGHTNESS_DEFAULT = 0.006;
+export const MOON_DARK_SIDE_BRIGHTNESS_MIN = 0;
+export const MOON_DARK_SIDE_BRIGHTNESS_MAX = 0.02;
 
 export const TEXTURES = {
   continents: "/textures/earth1.png",

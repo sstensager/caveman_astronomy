@@ -1,3 +1,4 @@
+import * as THREE from "three";
 import { describe, expect, it } from "vitest";
 import { OrbitingBodyMarkerLayer } from "./OrbitingBodyMarkerLayer";
 
@@ -84,5 +85,36 @@ describe("OrbitingBodyMarkerLayer", () => {
     // comes entirely from the scale multiplier.
     const geometry = layer.object3D.geometry as import("three").SphereGeometry;
     expect(geometry.parameters.radius).toBeCloseTo(2);
+  });
+
+  it("setDarkSideBrightness/setDarkSideLightDirection are harmless no-ops when darkSideBrightness wasn't supplied at construction", () => {
+    const layer = new OrbitingBodyMarkerLayer({
+      id: "test",
+      label: "Test",
+      group: "Sky.Geometry",
+      color: 0xffffff,
+      markerSize: 1,
+      lit: true,
+      getPosition: () => ({ x: 0, y: 0, z: 0 }),
+    });
+
+    expect(() => layer.setDarkSideBrightness(0.2)).not.toThrow();
+    expect(() => layer.setDarkSideLightDirection(new THREE.Vector3(1, 0, 0))).not.toThrow();
+  });
+
+  it("patches a MeshStandardMaterial's onBeforeCompile when lit and darkSideBrightness are both supplied", () => {
+    const layer = new OrbitingBodyMarkerLayer({
+      id: "test",
+      label: "Test",
+      group: "Sky.Geometry",
+      color: 0xffffff,
+      markerSize: 1,
+      lit: true,
+      darkSideBrightness: 0.1,
+      getPosition: () => ({ x: 0, y: 0, z: 0 }),
+    });
+
+    const material = layer.object3D.material as import("three").MeshStandardMaterial;
+    expect(material.onBeforeCompile).not.toBe(undefined);
   });
 });

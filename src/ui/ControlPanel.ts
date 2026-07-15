@@ -100,6 +100,11 @@ export interface SunAndMoonPanelConfig {
   moonDistance: SliderConfig;
   sunSize: SliderConfig;
   moonSize: SliderConfig;
+  /** How bright the Moon's own dark (unlit) side reads, independent of
+   *  Earth's own night-side ambient - 0 is basically black, higher values
+   *  are "mostly dark" but still a visible gray sphere. See
+   *  OrbitingBodyMarkerLayer.setDarkSideBrightness. */
+  moonDarkSideBrightness: SliderConfig;
 }
 
 export interface ObserverEntryDef {
@@ -479,6 +484,7 @@ export class ControlPanel {
       this.registerSlider("moonDistanceRadii", createSlider({ ...sm.moonDistance, label: "Moon-Earth Distance" })).element,
       createSlider({ ...sm.sunSize, label: "Sun Size" }).element,
       createSlider({ ...sm.moonSize, label: "Moon Size" }).element,
+      createSlider({ ...sm.moonDarkSideBrightness, label: "Moon Dark Side Brightness" }).element,
     ]);
   }
 
