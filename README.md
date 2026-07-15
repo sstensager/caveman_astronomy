@@ -70,8 +70,11 @@ src/
   cameras/           Camera rigs (free-roam orbit camera, first-person
                      ground camera) and the manager that switches between
                      them. Ground-view look/move controls live here too.
+                     The orbit rig also supports locking onto and following
+                     a moving body (see `OrbitCameraRig.setFollowTarget`).
   interaction/       Pointer-driven interactions: click-to-select a star,
-                     hover-and-drag an observer's pin.
+                     hover-and-drag an observer's pin, click-to-target the
+                     Sun/Moon/Earth for the camera to center on and follow.
   ui/                The control panel (plain DOM, no framework) and scene
                      presets.
   core/               Simulation clock (sim time vs. real time, play/pause,
@@ -97,16 +100,34 @@ single concept has multiple render representations (e.g. "Show Orbit
 Lines" drives both the Sun's and the Moon's orbit-line layers together).
 
 **One shared sky radius**: the star field, constellations, the celestial
-sphere wireframe shell, every observer's zenith marker/alt-az grid, and
-the Sun/Moon sky-path lines all track one live-adjustable radius (see
-`config/constants.ts`'s `STAR_RADIUS_*`) instead of existing as separate
-parallel display tiers. Drag it down for a small, easy-to-reason-about
-celestial-sphere demonstration (the observer at the center of a nearby
-sphere of fixed stars); drag it up for an immersive, effectively-infinite
-backdrop. All of it is observer-centered (`object3D.position` tracks the
-active observer's live world position each frame), which is what makes
-shrinking the radius an honest demonstration of "you are the center of
-your own sky," not just a smaller prop.
+sphere wireframe shell, the Sun/Moon sky-path lines, and each observer's
+zenith all track one live-adjustable radius (see `config/constants.ts`'s
+`STAR_RADIUS_*`) instead of existing as separate parallel display tiers.
+Drag it down for a small, easy-to-reason-about celestial-sphere
+demonstration (the observer at the center of a nearby sphere of fixed
+stars); drag it up for an immersive, effectively-infinite backdrop. All of
+it is observer-centered (`object3D.position` tracks the active observer's
+live world position each frame), which is what makes shrinking the radius
+an honest demonstration of "you are the center of your own sky," not just
+a smaller prop. Each observer's alt-az GRID deliberately does NOT track
+this radius - it's a personal "you are here, this is your horizon" prop
+(`ALT_AZ_DOME_RADIUS`), fixed tiny so it reads as a small dome sitting on
+the planet at the observer's feet from Space View rather than ballooning
+out with the star field.
+
+Any layer that mutates its own geometry's vertex positions directly in
+world space every frame (the alt-az grid, the zenith line) rather than
+moving via `object3D.position` must call `geometry.computeBoundingSphere()`
+after each rewrite, or Three.js's lazily-cached bounding sphere goes stale
+and the object gets silently frustum-culled the moment the camera moves far
+enough from wherever it happened to be on the first frame - see
+`OrbitLineLayer`/`SkyPathLineLayer`/`AltAzGridLayer`/`ZenithLayer` for the
+pattern. Similarly, any small marker whose distance from the camera can
+grow very large (the zenith dot, whose line now reaches the shared sky
+radius) needs to be a constant-screen-space `Sprite`
+(`sizeAttenuation: false`), not a literal small 3D mesh - a real-world-sized
+mesh shrinks to a sub-pixel, invisible speck at long range, the same reason
+stars themselves are drawn as shader points rather than true-scale spheres.
 
 **One Sun, one Moon, always.** Both markers (`OrbitingBodyMarkerLayer`
 instances, see `main.ts`'s `sunMarker`/`moonMarker`) are positioned
@@ -117,7 +138,25 @@ position; in Heliocentric, Earth's own rig moves to its real position
 around a Sun fixed at the world origin, using the exact same distance
 scale the marker's own offset uses, so the two cancel and the Sun always
 renders at the origin. See `src/astronomy/solarSystemDiagram.ts`'s doc
-comments for the underlying vector math and its model-agnostic proof.
+comments for the underlying vector math and its model-agnostic proof. The
+Moon's dark (unlit) side has its own independently-adjustable brightness
+floor, patched directly into its compiled `MeshStandardMaterial` shader
+(`OrbitingBodyMarkerLayer`'s `darkSideBrightness` option, same
+`onBeforeCompile` technique `ContinentsLayer` uses for Earth's real
+day/night terminator) rather than relying on the scene's global
+`AmbientLight`, which also sets Earth's own night-side floor and shouldn't
+be coupled to the Moon's.
+
+**Target lock**: clicking the Sun, Moon, or Earth in Space View
+(`BodyTargetPicker`) centers the camera on it and keeps following it every
+frame as it moves, while the user's own drag-to-orbit/zoom keeps working
+normally around the (moving) target - `OrbitCameraRig` just eases its
+`OrbitControls.target` toward the tracked body's live world position each
+frame rather than snapping, and since `OrbitControls` reconstructs
+`camera.position` from `target` plus its existing spherical offset, the
+camera translates rigidly with the target for free with no bespoke
+camera-position math. Escape, clicking anywhere else, or the Clear Target
+button release it.
 
 ## Running things
 
