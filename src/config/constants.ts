@@ -39,6 +39,13 @@ export const ALT_AZ_DOME_RADIUS = EARTH_RADIUS * 0.06;
 // of a true-scale sphere.
 export const ZENITH_DOT_SIZE = 0.012;
 
+// The camera-target reticles' own marker size - same constant-screen-space
+// Sprite scale reasoning as ZENITH_DOT_SIZE above (these sit on bodies as
+// far out as the Sun/Moon markers, not just near Earth), just a bit larger
+// since a reticle needs to visibly ring/bracket a body rather than mark a
+// bare point. See TargetReticleLayer.
+export const TARGET_RETICLE_SIZE = 0.03;
+
 export const STARS_DEFAULT = {
   limitingMagnitude: 6.5,
   size: 1,
@@ -59,6 +66,10 @@ export const STAR_LIMITING_MAGNITUDE_MAX = 6.5;
 export const POINTS_PICK_THRESHOLD_RATIO = 0.015;
 
 export const CELESTIAL_SPHERE_WIREFRAME_OPACITY_DEFAULT = 0.2;
+
+// Less than fully opaque out of the box - the raw continents texture reads
+// as too bright/saturated sitting on top of a live 3D view (see MinimapHud).
+export const MINIMAP_OPACITY_DEFAULT = 0.7;
 
 // Simulated-day step sizes for the Time section's Step Hour/Day/Month/Year
 // buttons. Month/Year are calendar approximations, not astronomically
@@ -103,6 +114,15 @@ export const COLORS = {
   star: 0xffffff,
   sun: 0xffcc55,
   moon: 0xd8dee6,
+  // Deliberately distinct from each other (and from sun/moon/earth's own
+  // colors above) so the two reticle kinds read as different things at a
+  // glance - see TargetReticleLayer.
+  targetReticleAnchor: 0xffffff,
+  targetReticleLookAt: 0x5fffe0,
+  // Ground-sky atmosphere day/sunset tint - no separate "night" entry, night
+  // deliberately reuses `background` exactly (see AtmosphereLayer).
+  atmosphereDay: 0x87ceeb,
+  atmosphereSunset: 0xff8c42,
 } as const;
 
 // One color per observer, cycled by creation order - lets multiple
@@ -183,3 +203,18 @@ export const TEXTURES = {
   continents: "/textures/earth1.png",
   continentsNight: "/textures/earth_night2.png",
 } as const;
+
+// --- Ground-sky atmosphere -------------------------------------------------
+// Dot-product half-width for the ground sky's day/night blend. Wider than
+// TERMINATOR_SOFTNESS (0.08, a hard ground line) so the sky reads as a
+// gradual brightening rather than an instant flip - roughly +-11.5deg of
+// solar elevation around the horizon.
+export const ATMOSPHERE_DAY_NIGHT_SOFTNESS = 0.2;
+
+// Dot-product half-width where the optional warm sunset wash is visible at
+// all (0 outside it), and how strongly it tints the sky at its peak
+// (dot = 0, sun exactly at the horizon) - a fraction, not a full replace, so
+// it reads as a tint on top of the day/night blend rather than a third flat
+// color state.
+export const ATMOSPHERE_SUNSET_BAND = 0.15;
+export const ATMOSPHERE_SUNSET_STRENGTH = 0.5;

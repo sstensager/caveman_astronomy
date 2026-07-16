@@ -72,6 +72,7 @@ const VERTEX_SHADER = /* glsl */ `
 const FRAGMENT_SHADER = /* glsl */ `
   uniform float uBrightness;
   uniform float uOpacity;
+  uniform float uDayNightFactor;
 
   varying vec3 vColor;
   varying float vFade;
@@ -81,7 +82,7 @@ const FRAGMENT_SHADER = /* glsl */ `
     float dist = length(centered);
     float mask = 1.0 - smoothstep(0.4, 0.5, dist);
     if (mask <= 0.0) discard;
-    gl_FragColor = vec4(vColor * uBrightness, mask * uOpacity * vFade);
+    gl_FragColor = vec4(vColor * uBrightness, mask * uOpacity * vFade * (1.0 - uDayNightFactor));
   }
 `;
 
@@ -151,6 +152,7 @@ export class StarsLayer implements Layer {
         uSizeScale: { value: options.size },
         uBrightness: { value: options.brightness },
         uOpacity: { value: options.opacity },
+        uDayNightFactor: { value: 0 },
       },
       vertexShader: VERTEX_SHADER,
       fragmentShader: FRAGMENT_SHADER,
@@ -200,6 +202,14 @@ export class StarsLayer implements Layer {
 
   setOpacity(value: number): void {
     this.material.uniforms.uOpacity.value = value;
+  }
+
+  /** 0 = fully visible (default, today's behavior), 1 = fully hidden -
+   *  pushed once per frame from main.ts, driven by AtmosphereLayer's own
+   *  day/night state so stars fade out exactly when/while the ground sky
+   *  reads as bright. */
+  setDayNightFactor(factor: number): void {
+    this.material.uniforms.uDayNightFactor.value = factor;
   }
 
   setRadius(radius: number): void {

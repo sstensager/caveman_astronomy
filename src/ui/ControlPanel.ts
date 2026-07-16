@@ -6,6 +6,7 @@ import {
   createButton,
   createButtonGroup,
   createCheckbox,
+  createDateInput,
   createPlaceholder,
   createSection,
   createSlider,
@@ -77,6 +78,20 @@ export interface ScenePresetDef {
   onApply: () => void;
 }
 
+/** Solar-aligned stone circle monument (StonehengeLayer) - one placement
+ *  action ("place at wherever the active observer currently stands", a
+ *  one-shot snapshot, not a live follow), plus buttons to jump the
+ *  simulated clock to whichever alignment date each marker stone
+ *  demonstrates (findSeasonalMarkers in main.ts). */
+export interface StonehengePanelConfig {
+  visible: ToggleConfig;
+  onPlaceAtObserver: () => void;
+  onJumpToJuneSolstice: () => void;
+  onJumpToDecemberSolstice: () => void;
+  onJumpToMarchEquinox: () => void;
+  onJumpToSeptemberEquinox: () => void;
+}
+
 /** The single home for every Sun/Moon control in the app - one Sun, one
  *  Moon, always, regardless of which Scene is active. Distance/size are
  *  continuous sliders (Earth-radii units) rather than a fixed set of
@@ -144,6 +159,7 @@ export interface ObserverPanelConfig {
  *  ("Background Stars" and "Celestial Sphere") each with its own duplicated
  *  controls - collapsed to one. */
 export interface SkyPanelConfig {
+  atmosphereVisible: ToggleConfig;
   radius: SliderConfig;
   shellVisible: ToggleConfig;
   wireframeOpacity: SliderConfig;
@@ -164,7 +180,11 @@ export interface ControlPanelConfig {
     rotation: ToggleConfig;
     axis: ToggleConfig;
     axialTilt: SliderConfig;
+    /** Real, geography-pinned trees/rocks/mountains/boats near wherever the
+     *  active observer currently stands - see GroundScatterLayer. */
+    groundScatter: ToggleConfig;
   };
+  stonehenge: StonehengePanelConfig;
   sunAndMoon: SunAndMoonPanelConfig;
   sky: SkyPanelConfig;
   observer: ObserverPanelConfig;
@@ -172,11 +192,21 @@ export interface ControlPanelConfig {
     viewModes: ViewModeDef[];
     onCameraModeChange: (mode: CameraMode) => void;
     upMode: CameraUpModePanelConfig;
-    /** Releases whatever body is currently targeted (see
-     *  BodyTargetPicker/setTargetedBody in main.ts) - same effect as
-     *  pressing Escape or clicking empty space, exposed here as a button
+    /** Releases whatever's currently targeted - BOTH the click-set anchor
+     *  and the long-press-set look-at target (see BodyTargetPicker/
+     *  setAnchorBody/setLookAtBody in main.ts) - same effect as pressing
+     *  Escape or clicking/pressing empty space, exposed here as a button
      *  for discoverability. */
     onClearTarget: () => void;
+    /** Master "hide reticles" toggle - see TargetReticleLayer.setVisible. */
+    reticles: ToggleConfig;
+    /** MinimapHud is ALSO only ever shown in Ground View (see main.ts's
+     *  render loop, which ANDs this with the live camera-mode check) - this
+     *  lets it be suppressed on demand even while in Ground View. */
+    minimapVisible: ToggleConfig;
+    /** Only controls how opaque/bright the minimap reads while visible, not
+     *  whether it's shown at all - see minimapVisible above. */
+    minimapOpacity: SliderConfig;
   };
   time: {
     onPlayPauseChange: (paused: boolean) => void;
@@ -186,6 +216,12 @@ export interface ControlPanelConfig {
     onStepMonth: () => void;
     onStepYear: () => void;
     onReset: () => void;
+    /** Seeds the date picker's initial value only (like every other
+     *  control's construction-time `value`) - it does NOT stay live-synced
+     *  while time passes (play/step buttons/speed all move the clock too);
+     *  the always-visible TimeHud is what shows the live current date. */
+    currentDate: Date;
+    onSelectDate: (date: Date) => void;
   };
 }
 
@@ -231,6 +267,8 @@ export class ControlPanel {
   private observerTogglesContainer?: HTMLElement;
   private observerLatLonLabel?: HTMLElement;
   private targetedBodyLabel?: HTMLElement;
+  private lookAtBodyLabel?: HTMLElement;
+  private stonehengeLocationLabel?: HTMLElement;
   private onSwitchActiveObserver?: (id: string) => void;
 
   constructor(container: HTMLElement, config: ControlPanelConfig) {
@@ -242,6 +280,7 @@ export class ControlPanel {
     this.element.appendChild(this.buildSceneSection(config));
     this.element.appendChild(this.buildPresetsSection(config));
     this.element.appendChild(this.buildEarthSection(config));
+    this.element.appendChild(this.buildStonehengeSection(config));
     this.element.appendChild(this.buildSunAndMoonSection(config));
     this.element.appendChild(this.buildSkySection(config));
     this.element.appendChild(this.buildObserverSection(config));
@@ -321,13 +360,37 @@ export class ControlPanel {
     this.observerLatLonLabel.textContent = `${latText}, ${lonText}`;
   }
 
-  /** Reflects the currently-targeted body (see BodyTargetPicker/
-   *  setTargetedBody in main.ts) in the Camera section - pass undefined
-   *  when tracking is released (Escape, clicking elsewhere, or the Clear
-   *  Target button). */
-  setTargetedBody(label: string | undefined): void {
+  /** Reflects the current orbit ANCHOR body (see BodyTargetPicker/
+   *  setAnchorBody in main.ts) in the Camera section - pass undefined when
+   *  tracking is released (Escape, clicking elsewhere, or the Clear Target
+   *  button). */
+  setAnchorBody(label: string | undefined): void {
     if (!this.targetedBodyLabel) return;
-    this.targetedBodyLabel.textContent = label ? `Following: ${label} (Esc or click elsewhere to release)` : "";
+    this.targetedBodyLabel.textContent = label ? `Following: ${label} (click elsewhere to release)` : "";
+  }
+
+  /** Reflects the current LOOK-AT body (see BodyTargetPicker/setLookAtBody
+   *  in main.ts) - independent of setAnchorBody above, set via a long-press
+   *  instead of a click. Pass undefined when released (Escape, a long-press
+   *  on empty space, or the Clear Target button). */
+  setLookAtBody(label: string | undefined): void {
+    if (!this.lookAtBodyLabel) return;
+    this.lookAtBodyLabel.textContent = label ? `Looking at: ${label} (long-press elsewhere to release)` : "";
+  }
+
+  /** Reflects where StonehengeLayer was last place()'d - pushed once, right
+   *  after the "Place Henge at My Location" button's onClick runs (not
+   *  every frame, unlike setObserverLatLon - the henge doesn't move once
+   *  placed). Pass undefined for the initial "not yet placed" state. */
+  setStonehengeLocation(latLon: { latDeg: number; lonDeg: number } | undefined): void {
+    if (!this.stonehengeLocationLabel) return;
+    if (!latLon) {
+      this.stonehengeLocationLabel.textContent = "Not yet placed";
+      return;
+    }
+    const latText = `${Math.abs(latLon.latDeg).toFixed(1)}°${latLon.latDeg >= 0 ? "N" : "S"}`;
+    const lonText = `${Math.abs(latLon.lonDeg).toFixed(1)}°${latLon.lonDeg >= 0 ? "E" : "W"}`;
+    this.stonehengeLocationLabel.textContent = `Placed at ${latText}, ${lonText}`;
   }
 
   /** Reflects a programmatic layer-visibility change (e.g. a scene preset)
@@ -449,8 +512,38 @@ export class ControlPanel {
       this.registerLayerCheckbox("axis", createCheckbox("Axis", config.earth.axis.checked, config.earth.axis.onChange)).element,
       tiltSlider.element,
       resetTiltButton,
+      this.registerLayerCheckbox(
+        "groundScatter",
+        createCheckbox("Ground Scatter (Ground View)", config.earth.groundScatter.checked, config.earth.groundScatter.onChange),
+      ).element,
     ];
     return createSection("Earth", true, content);
+  }
+
+  /** See StonehengePanelConfig's doc comment. */
+  private buildStonehengeSection(config: ControlPanelConfig): HTMLElement {
+    const sh = config.stonehenge;
+
+    const placeButton = createButton("Place Henge at My Location", sh.onPlaceAtObserver);
+
+    this.stonehengeLocationLabel = document.createElement("div");
+    this.stonehengeLocationLabel.className = "control-selected-star-line";
+    this.setStonehengeLocation(undefined);
+
+    const { element: jumpButtons } = createButtonGroup([
+      { key: "june", label: "June Solstice", onClick: sh.onJumpToJuneSolstice },
+      { key: "december", label: "December Solstice", onClick: sh.onJumpToDecemberSolstice },
+      { key: "march", label: "March Equinox", onClick: sh.onJumpToMarchEquinox },
+      { key: "september", label: "September Equinox", onClick: sh.onJumpToSeptemberEquinox },
+    ]);
+
+    return createSection("Stonehenge", false, [
+      this.registerLayerCheckbox("stonehenge", createCheckbox("Show Stonehenge", sh.visible.checked, sh.visible.onChange)).element,
+      placeButton,
+      this.stonehengeLocationLabel,
+      createSubsectionHeading("Jump to Alignment Date"),
+      jumpButtons,
+    ]);
   }
 
   /** The single home for every Sun/Moon control - see SunAndMoonPanelConfig's
@@ -540,6 +633,11 @@ export class ControlPanel {
   private buildSkySection(config: ControlPanelConfig): HTMLElement {
     const sky = config.sky;
 
+    const atmosphereVisible = this.registerLayerCheckbox(
+      "atmosphere",
+      createCheckbox("Show Atmosphere", sky.atmosphereVisible.checked, sky.atmosphereVisible.onChange),
+    );
+
     const shellVisible = this.registerLayerCheckbox(
       "celestialSphereShell",
       createCheckbox("Show Celestial Sphere Shell", sky.shellVisible.checked, sky.shellVisible.onChange),
@@ -577,6 +675,9 @@ export class ControlPanel {
     });
 
     const content = [
+      createSubsectionHeading("Atmosphere"),
+      atmosphereVisible.element,
+
       this.registerSlider("skyRadius", createSlider({ ...sky.radius, label: "Sky Radius" })).element,
       shellVisible.element,
       createSlider({ ...sky.wireframeOpacity, label: "Shell Wireframe Opacity", format: sky.wireframeOpacity.format ?? percentFormat }).element,
@@ -640,16 +741,32 @@ export class ControlPanel {
 
     this.targetedBodyLabel = document.createElement("div");
     this.targetedBodyLabel.className = "control-selected-star-line";
+    this.lookAtBodyLabel = document.createElement("div");
+    this.lookAtBodyLabel.className = "control-selected-star-line";
     const clearTargetButton = createButton("Clear Target", config.camera.onClearTarget);
+    const reticlesCheckbox = this.registerLayerCheckbox(
+      "targetReticles",
+      createCheckbox("Show Target Reticles", config.camera.reticles.checked, config.camera.reticles.onChange),
+    );
 
     return createSection("Camera", true, [
       element,
       createSubsectionHeading("Up (Space View)"),
       upModeElement,
       createSubsectionHeading("Target Lock (Space View)"),
-      createPlaceholder("Click the Sun, Moon, or Earth to center and follow it."),
+      createPlaceholder("Click a body to follow it; long-press a body to look at it instead."),
       this.targetedBodyLabel,
+      this.lookAtBodyLabel,
       clearTargetButton,
+      reticlesCheckbox.element,
+      createSubsectionHeading("Minimap (Ground View)"),
+      createCheckbox("Show Minimap", config.camera.minimapVisible.checked, config.camera.minimapVisible.onChange)
+        .element,
+      createSlider({
+        ...config.camera.minimapOpacity,
+        label: "Opacity",
+        format: config.camera.minimapOpacity.format ?? percentFormat,
+      }).element,
     ]);
   }
 
@@ -678,10 +795,17 @@ export class ControlPanel {
     resetButton.textContent = "Reset Time";
     resetButton.addEventListener("click", config.time.onReset);
 
+    const dateInput = createDateInput({
+      label: "Jump to Date",
+      value: config.time.currentDate,
+      onChange: config.time.onSelectDate,
+    });
+
     const content = [
       playPauseButton,
       createSlider({ ...config.time.timeScale, label: "Time Scale", format: config.time.timeScale.format ?? ((v) => `${v}x`) }).element,
       stepButtons,
+      dateInput.element,
       resetButton,
     ];
     return createSection("Time", true, content);

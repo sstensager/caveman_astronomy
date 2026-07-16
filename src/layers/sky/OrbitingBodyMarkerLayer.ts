@@ -7,9 +7,19 @@ import type { Vector3Like } from "../../astronomy/types";
  *  (avoids an obviously artificial razor-sharp line). */
 const DARK_SIDE_SOFTNESS = 0.08;
 
+/** How much the LIT side fades toward the sky color, relative to the dark
+ *  side, as the sky brightens (see setSkyBlend) - the dark side always fades
+ *  all the way to 100% sky color (fully invisible) at full daylight, but the
+ *  lit side only fades by this fraction, so it stays faintly visible instead
+ *  of vanishing outright, the way a real daytime moon does. */
+const DAYTIME_LIT_FADE_FRACTION = 0.55;
+
 interface DarkSideUniforms {
   uSunDirectionWorld: { value: THREE.Vector3 };
   uDarkSideBrightness: { value: number };
+  uSkyColor: { value: THREE.Color };
+  uSkyBlendDark: { value: number };
+  uSkyBlendLit: { value: number };
 }
 
 export interface OrbitingBodyMarkerOptions {
@@ -79,6 +89,7 @@ export class OrbitingBodyMarkerLayer implements Layer {
   private readonly baseMarkerSize: number;
   private readonly spinMode: "still" | "tidalLocked";
   private readonly sunDirection = new THREE.Vector3(1, 0, 0);
+  private readonly skyColor = new THREE.Color(0x000000);
   private darkSideBrightness: number;
   private darkSideUniforms?: DarkSideUniforms;
 
@@ -107,9 +118,15 @@ export class OrbitingBodyMarkerLayer implements Layer {
       standardMaterial.onBeforeCompile = (shader) => {
         shader.uniforms.uSunDirectionWorld = { value: this.sunDirection.clone() };
         shader.uniforms.uDarkSideBrightness = { value: this.darkSideBrightness };
+        shader.uniforms.uSkyColor = { value: this.skyColor.clone() };
+        shader.uniforms.uSkyBlendDark = { value: 0 };
+        shader.uniforms.uSkyBlendLit = { value: 0 };
         this.darkSideUniforms = {
           uSunDirectionWorld: shader.uniforms.uSunDirectionWorld as { value: THREE.Vector3 },
           uDarkSideBrightness: shader.uniforms.uDarkSideBrightness as { value: number },
+          uSkyColor: shader.uniforms.uSkyColor as { value: THREE.Color },
+          uSkyBlendDark: shader.uniforms.uSkyBlendDark as { value: number },
+          uSkyBlendLit: shader.uniforms.uSkyBlendLit as { value: number },
         };
 
         // Same world-space-normal technique as ContinentsLayer's day/night
@@ -132,7 +149,7 @@ export class OrbitingBodyMarkerLayer implements Layer {
         shader.fragmentShader = shader.fragmentShader
           .replace(
             "#include <common>",
-            "#include <common>\nvarying vec3 vWorldNormalDarkSide;\nuniform vec3 uSunDirectionWorld;\nuniform float uDarkSideBrightness;",
+            "#include <common>\nvarying vec3 vWorldNormalDarkSide;\nuniform vec3 uSunDirectionWorld;\nuniform float uDarkSideBrightness;\nuniform vec3 uSkyColor;\nuniform float uSkyBlendDark;\nuniform float uSkyBlendLit;",
           )
           .replace(
             "#include <opaque_fragment>",
@@ -140,6 +157,8 @@ export class OrbitingBodyMarkerLayer implements Layer {
 	float darkSideFactor = smoothstep( -${DARK_SIDE_SOFTNESS.toFixed(3)}, ${DARK_SIDE_SOFTNESS.toFixed(3)}, dot( normalize( vWorldNormalDarkSide ), uSunDirectionWorld ) );
 	vec3 darkSideColor = diffuseColor.rgb * uDarkSideBrightness;
 	outgoingLight = mix( darkSideColor, outgoingLight, darkSideFactor );
+	float skyBlendAmount = mix( uSkyBlendDark, uSkyBlendLit, darkSideFactor );
+	outgoingLight = mix( outgoingLight, uSkyColor, skyBlendAmount );
 	#include <opaque_fragment>`,
           );
       };
@@ -186,6 +205,24 @@ export class OrbitingBodyMarkerLayer implements Layer {
   setDarkSideBrightness(value: number): void {
     this.darkSideBrightness = value;
     if (this.darkSideUniforms) this.darkSideUniforms.uDarkSideBrightness.value = value;
+  }
+
+  /** Fades this body toward `skyColor` as `dayFactor` (0 = night, 1 = full
+   *  daylight - see AtmosphereLayer.getDayFactor) increases: the DARK side
+   *  fades all the way to 100% sky color at dayFactor=1 (vanishes
+   *  completely, matching how the unlit hemisphere of a real daytime moon
+   *  is imperceptible against a bright sky), while the LIT side only fades
+   *  by DAYTIME_LIT_FADE_FRACTION of that (stays faintly visible rather
+   *  than disappearing outright). Only meaningful if `darkSideBrightness`
+   *  was supplied at construction, like setDarkSideLightDirection/
+   *  setDarkSideBrightness - harmless no-op otherwise, and safe to call
+   *  before the shader has compiled. */
+  setSkyBlend(skyColor: THREE.Color, dayFactor: number): void {
+    this.skyColor.copy(skyColor);
+    if (!this.darkSideUniforms) return;
+    this.darkSideUniforms.uSkyColor.value.copy(skyColor);
+    this.darkSideUniforms.uSkyBlendDark.value = dayFactor;
+    this.darkSideUniforms.uSkyBlendLit.value = dayFactor * DAYTIME_LIT_FADE_FRACTION;
   }
 
   private recompute(): void {

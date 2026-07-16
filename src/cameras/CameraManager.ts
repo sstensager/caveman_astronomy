@@ -65,6 +65,13 @@ export class CameraManager {
     this.spaceRig.setFollowTarget(getter);
   }
 
+  /** Only meaningful in Space View - see OrbitCameraRig.setLookAtTarget.
+   *  Independent of setSpaceFollowTarget above: that controls where the
+   *  camera orbits around, this controls where it points. */
+  setSpaceLookAtTarget(getter: (() => THREE.Vector3) | undefined): void {
+    this.spaceRig.setLookAtTarget(getter);
+  }
+
   setMode(mode: CameraMode): void {
     if (mode === this.mode) return;
     this.rigs[this.mode].setActive(false);

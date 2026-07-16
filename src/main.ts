@@ -8,7 +8,14 @@ import { CompositeLayer } from "./layers/CompositeLayer";
 import { EarthBase } from "./layers/earth/EarthBase";
 import { ContinentsLayer } from "./layers/earth/ContinentsLayer";
 import { AxisLayer } from "./layers/earth/AxisLayer";
+import { GroundScatterLayer } from "./layers/earth/GroundScatterLayer";
+import { StonehengeLayer } from "./layers/earth/StonehengeLayer";
+import { ImageLandMask } from "./utils/landMask";
+import { findSeasonalMarkers } from "./astronomy/seasons";
+import { sunHorizonAzimuths } from "./astronomy/sunHorizon";
+import { findRotationForHorizonAzimuth } from "./utils/rotationAlignment";
 import { StarsLayer } from "./layers/sky/StarsLayer";
+import { AtmosphereLayer } from "./layers/sky/AtmosphereLayer";
 import { CelestialSphereShell } from "./layers/sky/CelestialSphereShell";
 import { ConstellationLinesLayer } from "./layers/sky/ConstellationLinesLayer";
 import { ConstellationLabelsLayer } from "./layers/sky/ConstellationLabelsLayer";
@@ -18,9 +25,10 @@ import { OrbitingBodyMarkerLayer } from "./layers/sky/OrbitingBodyMarkerLayer";
 import { ModernHeliocentricModel } from "./astronomy/models/ModernHeliocentricModel";
 import { GeocentricModel } from "./astronomy/models/GeocentricModel";
 import { AstronomyModelRegistry } from "./astronomy/AstronomyModelRegistry";
-import { BodyIds, type AstronomyModel } from "./astronomy/types";
+import { BodyIds, type AstronomyModel, type SimulationTime } from "./astronomy/types";
 import { getEarthDiagramPosition, getMoonOffsetFromEarth, getSunOffsetFromEarth } from "./astronomy/solarSystemDiagram";
 import { eclipticToWorld } from "./astronomy/frames";
+import { dateToSimulationDay, simulationDayToDate } from "./astronomy/calendar";
 import { STAR_CATALOG } from "./astronomy/starCatalog";
 import { RESOLVED_CONSTELLATION_CULTURES } from "./astronomy/constellationCatalog";
 import { GroundObserver } from "./observers/GroundObserver";
@@ -34,16 +42,20 @@ import { CameraMode } from "./cameras/CameraMode";
 import { CameraUpMode } from "./cameras/CameraUpMode";
 import { GroundMoveControls } from "./cameras/GroundMoveControls";
 import { ControlPanel, type ControlPanelConfig, type ViewModeDef } from "./ui/ControlPanel";
+import { TimeHud } from "./ui/TimeHud";
+import { MinimapHud } from "./ui/MinimapHud";
 import { SCENE_PRESETS } from "./ui/scenePresets";
 import { StarPicker } from "./interaction/StarPicker";
 import { SelectedStarMarker } from "./interaction/SelectedStarMarker";
 import { ObserverDragHandler } from "./interaction/ObserverDragHandler";
 import { BodyTargetPicker, type TargetableBody } from "./interaction/BodyTargetPicker";
+import { TargetReticleLayer } from "./interaction/TargetReticleLayer";
 import type { HemisphereMode } from "./utils/hemisphereFade";
 import type { Layer } from "./layers/Layer";
 import {
   ALT_AZ_DOME_RADIUS,
   COLORS,
+  TEXTURES,
   DEFAULT_LATITUDE_DEG,
   EARTH_RADIUS,
   DEFAULT_LONGITUDE_DEG,
@@ -72,6 +84,7 @@ import {
   SUN_SIZE_MIN_RADII,
   SUN_SIZE_MAX_RADII,
   CELESTIAL_SPHERE_WIREFRAME_OPACITY_DEFAULT,
+  MINIMAP_OPACITY_DEFAULT,
   ZENITH_DOT_SIZE,
   TIME_SPEED_DEFAULT,
   TIME_SPEED_MAX,
@@ -147,6 +160,16 @@ const earthBase = new EarthBase();
 earthBase.rotationEnabled = false;
 const continents = new ContinentsLayer(earthBase.mesh, earthBase.oceanMaterial);
 const axis = new AxisLayer(earthBase.rotationGroup);
+// Loads earth1.png independently of ContinentsLayer's own THREE.Texture (a
+// second decode of the same file) so GroundScatterLayer can read real pixel
+// data via canvas - THREE's texture pipeline doesn't expose that. See
+// landMask.ts's doc comment for why this can't be unit-tested directly.
+const landMask = new ImageLandMask(TEXTURES.continents);
+const groundScatter = new GroundScatterLayer(landMask);
+earthBase.rotationGroup.add(groundScatter.object3D);
+
+const stonehenge = new StonehengeLayer();
+earthBase.rotationGroup.add(stonehenge.object3D);
 
 // --- Observers ---------------------------------------------------------
 // Multiple observers can coexist; exactly one is "active" at a time - WASD,
@@ -158,6 +181,9 @@ const observerRegistry = new ObserverRegistry();
 let observerMarkersVisible = true;
 let observerFarSideIndicatorEnabled = true;
 let nextObserverNumber = 1;
+// ANDed with the live groundViewActive check in the render loop - see
+// MinimapHud's class doc comment.
+let minimapManuallyVisible = true;
 
 // The one shared sky/celestial-sphere radius - stars, constellations, the
 // wireframe shell, the Sun/Moon sky-path lines, and each observer's zenith
@@ -208,7 +234,7 @@ function createObserverEntry(id: string, label: string, latDeg: number, lonDeg: 
   scene.add(zenith.object3D, altAzGrid.object3D);
   layers.show({ [zenith.id]: false, [altAzGrid.id]: false });
 
-  return { id, label, station, observer, marker, zenith, altAzGrid };
+  return { id, label, station, observer, marker, color, zenith, altAzGrid };
 }
 
 const defaultObserverEntry = createObserverEntry(
@@ -241,6 +267,8 @@ const stars = new StarsLayer({
   ...STARS_DEFAULT,
   supportsHemisphereFade: true,
 });
+
+const atmosphere = new AtmosphereLayer(scene);
 
 const ALL_CONSTELLATIONS = RESOLVED_CONSTELLATION_CULTURES.flatMap((culture) => culture.constellations);
 
@@ -448,10 +476,15 @@ const observerFarSideIndicatorLayer: Layer = {
   },
 };
 
+const targetReticles = new TargetReticleLayer();
+
 layers.register(earthBase);
 layers.register(continents);
 layers.register(axis);
+layers.register(groundScatter);
+layers.register(stonehenge);
 layers.register(stars);
+layers.register(atmosphere);
 layers.register(constellationLines);
 layers.register(constellationNames);
 layers.register(celestialSphereShell);
@@ -465,6 +498,7 @@ layers.register(orbitLines);
 layers.register(earthOrbitLine);
 layers.register(observerMarkersLayer);
 layers.register(observerFarSideIndicatorLayer);
+layers.register(targetReticles);
 
 scene.add(earthBase.object3D);
 scene.add(stars.object3D);
@@ -472,6 +506,7 @@ scene.add(constellationLines.object3D);
 scene.add(constellationNames.object3D);
 scene.add(celestialSphereShell.object3D);
 scene.add(sunEclipticPath.object3D, moonSkyPath.object3D);
+scene.add(targetReticles.object3D);
 
 // keyLight and its target are parented under earthBase.object3D: the
 // per-frame position formula in the render loop below
@@ -488,7 +523,10 @@ const defaultLayerVisibility: Record<string, boolean> = {
   earthBase: true,
   continents: true,
   axis: true,
+  groundScatter: true,
+  stonehenge: false,
   stars: true,
+  atmosphere: true,
   constellationLines: false,
   constellationNames: false,
   celestialSphereShell: false,
@@ -500,6 +538,7 @@ const defaultLayerVisibility: Record<string, boolean> = {
   earthOrbitLine: false,
   observerMarkers: true,
   observerFarSideIndicator: true,
+  targetReticles: true,
 };
 layers.show(defaultLayerVisibility);
 
@@ -556,19 +595,34 @@ const targetableBodies: TargetableBody[] = [
   { id: "earth", label: "Earth", object3D: earthBase.mesh },
 ];
 
-function setTargetedBody(id: string | undefined): void {
-  const body = id ? targetableBodies.find((b) => b.id === id) : undefined;
-  cameraManager.setSpaceFollowTarget(body ? () => body.object3D.getWorldPosition(new THREE.Vector3()) : undefined);
-  controlPanel.setTargetedBody(body?.label);
+function bodyPositionGetter(body: TargetableBody | undefined): (() => THREE.Vector3) | undefined {
+  return body ? () => body.object3D.getWorldPosition(new THREE.Vector3()) : undefined;
 }
 
-new BodyTargetPicker(() => cameraManager.getActiveCamera(), renderer.domElement, targetableBodies, setTargetedBody);
+function setAnchorBody(id: string | undefined): void {
+  const body = id ? targetableBodies.find((b) => b.id === id) : undefined;
+  cameraManager.setSpaceFollowTarget(bodyPositionGetter(body));
+  targetReticles.setAnchorTarget(bodyPositionGetter(body));
+  controlPanel.setAnchorBody(body?.label);
+}
 
-// Same release path as clicking empty space (see BodyTargetPicker's doc
-// comment) - a global listener rather than scoped to the canvas so it
-// still works while focus is on a control panel input.
+function setLookAtBody(id: string | undefined): void {
+  const body = id ? targetableBodies.find((b) => b.id === id) : undefined;
+  cameraManager.setSpaceLookAtTarget(bodyPositionGetter(body));
+  targetReticles.setLookAtTarget(bodyPositionGetter(body));
+  controlPanel.setLookAtBody(body?.label);
+}
+
+new BodyTargetPicker(() => cameraManager.getActiveCamera(), renderer.domElement, targetableBodies, setAnchorBody, setLookAtBody);
+
+// Same release path as clicking/long-pressing empty space (see
+// BodyTargetPicker's doc comment) - a global listener rather than scoped to
+// the canvas so it still works while focus is on a control panel input.
 window.addEventListener("keydown", (event) => {
-  if (event.key === "Escape") setTargetedBody(undefined);
+  if (event.key === "Escape") {
+    setAnchorBody(undefined);
+    setLookAtBody(undefined);
+  }
 });
 
 function addObserver(): void {
@@ -609,6 +663,37 @@ function switchScene(id: SceneId): void {
   activeScene = id;
   controlPanel.setActiveScene(id);
   applyEarthOrbitPathVisibility();
+}
+
+/** Snaps Earth's CURRENT rotation (not just the date) so the sun sits
+ *  exactly at the horizon, at the bearing matching the placed henge's own
+ *  alignment stone for this event - reuses the EXACT same
+ *  sunHorizonAzimuths call hengeLayout.ts used to place that stone, so the
+ *  found rotation is guaranteed to line up with it, not just "some"
+ *  sunrise/sunset. No-op if no henge has been placed yet (nothing to align
+ *  with) or if the event doesn't occur there that day (polar day/night -
+ *  see sunHorizonAzimuths' own contract). */
+function snapRotationToStonehengeAlignment(day: SimulationTime, declinationDeg: number, useSunsetAzimuth: boolean): void {
+  const placed = stonehenge.getPlacedLatLon();
+  if (!placed) return;
+
+  const horizonEvent = sunHorizonAzimuths(placed.latDeg, declinationDeg);
+  if (horizonEvent.kind !== "normal") return;
+  const targetAzimuthDeg = useSunsetAzimuth ? horizonEvent.sunsetAzimuthDeg : horizonEvent.sunriseAzimuthDeg;
+
+  const state = getActiveModel().getState(day);
+  const sunEcliptic = state.bodies[BodyIds.Sun].position;
+  const earthEcliptic = state.bodies[BodyIds.Earth].position;
+  const sunWorldDir = new THREE.Vector3(
+    sunEcliptic.x - earthEcliptic.x,
+    sunEcliptic.y - earthEcliptic.y,
+    sunEcliptic.z - earthEcliptic.z,
+  );
+  const sunWorldDirRotated = eclipticToWorld(sunWorldDir);
+  const sunDir = new THREE.Vector3(sunWorldDirRotated.x, sunWorldDirRotated.y, sunWorldDirRotated.z).normalize();
+
+  const theta = findRotationForHorizonAzimuth(earthBase.tiltGroup.quaternion, sunDir, placed.latDeg, placed.lonDeg, targetAzimuthDeg);
+  if (theta !== undefined) earthBase.rotationGroup.rotation.y = theta;
 }
 
 const panelConfig: ControlPanelConfig = {
@@ -655,6 +740,55 @@ const panelConfig: ControlPanelConfig = {
       max: 90,
       step: 0.5,
       onChange: (v) => earthBase.setAxialTilt(v),
+    },
+    groundScatter: {
+      checked: defaultLayerVisibility.groundScatter,
+      onChange: (v) => layers.show({ groundScatter: v }),
+    },
+  },
+  stonehenge: {
+    visible: {
+      checked: defaultLayerVisibility.stonehenge,
+      onChange: (v) => layers.show({ stonehenge: v }),
+    },
+    onPlaceAtObserver: () => {
+      const { latDeg, lonDeg } = observerRegistry.getActive().station.getLatLon();
+      stonehenge.place(latDeg, lonDeg);
+      layers.show({ stonehenge: true });
+      controlPanel.syncLayerToggles({ stonehenge: true });
+      controlPanel.setStonehengeLocation({ latDeg, lonDeg });
+    },
+    // Each jump snaps BOTH the date (which day) and Earth's current
+    // rotation (which moment within that day) so the sun actually sits at
+    // the placed henge's own marker stone, not just somewhere on the
+    // correct date - see snapRotationToStonehengeAlignment. All 4 target
+    // SUNRISE consistently (last useSunsetAzimuth arg is always false) -
+    // hengeLayout.ts's "Winter Solstice Sunrise" stone exists specifically
+    // so December has a real sunrise stone to match, alongside the
+    // "Winter Solstice Sunset" stone real Stonehenge's own axis uses (still
+    // built and visible, just not tied to a jump button). March/September
+    // both land on the same due-east "Equinox Sunrise" stone (declination
+    // is 0 for both - there's no astronomical difference in WHERE the sun
+    // rises between the two equinoxes, only the date differs).
+    onJumpToJuneSolstice: () => {
+      const day = findSeasonalMarkers(simClock.getElapsedDays()).juneSolstice;
+      simClock.setElapsedDays(day);
+      snapRotationToStonehengeAlignment(day, EARTH_AXIAL_TILT_DEG, false);
+    },
+    onJumpToDecemberSolstice: () => {
+      const day = findSeasonalMarkers(simClock.getElapsedDays()).decemberSolstice;
+      simClock.setElapsedDays(day);
+      snapRotationToStonehengeAlignment(day, -EARTH_AXIAL_TILT_DEG, false);
+    },
+    onJumpToMarchEquinox: () => {
+      const day = findSeasonalMarkers(simClock.getElapsedDays()).marchEquinox;
+      simClock.setElapsedDays(day);
+      snapRotationToStonehengeAlignment(day, 0, false);
+    },
+    onJumpToSeptemberEquinox: () => {
+      const day = findSeasonalMarkers(simClock.getElapsedDays()).septemberEquinox;
+      simClock.setElapsedDays(day);
+      snapRotationToStonehengeAlignment(day, 0, false);
     },
   },
   sunAndMoon: {
@@ -736,6 +870,7 @@ const panelConfig: ControlPanelConfig = {
     })),
   },
   sky: {
+    atmosphereVisible: { checked: true, onChange: (v) => layers.show({ atmosphere: v }) },
     radius: {
       value: skyRadius,
       min: STAR_RADIUS_MIN,
@@ -791,7 +926,25 @@ const panelConfig: ControlPanelConfig = {
       activeId: CameraUpMode.Equatorial,
       onSwitchActive: switchCameraUpMode,
     },
-    onClearTarget: () => setTargetedBody(undefined),
+    onClearTarget: () => {
+      setAnchorBody(undefined);
+      setLookAtBody(undefined);
+    },
+    reticles: {
+      checked: defaultLayerVisibility.targetReticles,
+      onChange: (v) => layers.show({ targetReticles: v }),
+    },
+    minimapVisible: {
+      checked: minimapManuallyVisible,
+      onChange: (v) => (minimapManuallyVisible = v),
+    },
+    minimapOpacity: {
+      value: MINIMAP_OPACITY_DEFAULT,
+      min: 0,
+      max: 1,
+      step: 0.05,
+      onChange: (v) => minimapHud.setOpacity(v),
+    },
   },
   time: {
     onPlayPauseChange: (paused) => (simClock.paused = paused),
@@ -808,11 +961,15 @@ const panelConfig: ControlPanelConfig = {
     onStepMonth: () => simClock.addElapsedDays(TIME_STEP_MONTH_DAYS),
     onStepYear: () => simClock.addElapsedDays(TIME_STEP_YEAR_DAYS),
     onReset: () => simClock.reset(),
+    currentDate: simulationDayToDate(getSimulationTime()),
+    onSelectDate: (date) => simClock.setElapsedDays(dateToSimulationDay(date)),
   },
 };
 
 controlPanel = new ControlPanel(container, panelConfig);
 controlPanel.setActiveCameraMode(CameraMode.Space);
+const timeHud = new TimeHud(container);
+const minimapHud = new MinimapHud(container);
 
 new StarPicker(
   () => cameraManager.getActiveCamera(),
@@ -884,8 +1041,39 @@ renderer.setAnimationLoop(() => {
   // Moon's lighting already relied on via the shared scene keyLight before.
   moonMarker.setDarkSideLightDirection(sunLightDirection);
 
+  const observerUp = getActiveObserver().getFrame().up;
+  const groundViewActive = cameraManager.getMode() === CameraMode.Ground;
+  atmosphere.updateSky(sunLightDirection, observerUp, groundViewActive);
+  const skyFadeFactor = atmosphere.getFadeFactor();
+  stars.setDayNightFactor(skyFadeFactor);
+  // Fade the Moon into the sky as it brightens - the dark side fully
+  // (vanishes against blue sky), the lit side only partially (reads as
+  // faint, the way a real daytime moon does) - see
+  // OrbitingBodyMarkerLayer.setSkyBlend's doc comment. Uses getFadeFactor
+  // (not getDayFactor) so this also fully kicks in right at the sunset/
+  // sunrise transition, not just once the sun is comfortably above the
+  // horizon - see AtmosphereLayer.getFadeFactor's doc comment.
+  moonMarker.setSkyBlend(atmosphere.getColor(), skyFadeFactor);
+
   const activeLatLon = observerRegistry.getActive().station.getLatLon();
   controlPanel.setObserverLatLon(activeLatLon.latDeg, activeLatLon.lonDeg);
+  timeHud.update(simulationDayToDate(universeState.time), simClock.timeSpeed, simClock.paused);
+  // Internally a no-op unless the active observer has moved past
+  // GroundScatterLayer's own REGEN_THRESHOLD since the last rebuild - cheap
+  // enough to call unconditionally every frame.
+  groundScatter.regenerateAround(activeLatLon.latDeg, activeLatLon.lonDeg);
+
+  const minimapVisible = groundViewActive && minimapManuallyVisible;
+  minimapHud.setVisible(minimapVisible);
+  if (minimapVisible) {
+    const activeObserverId = observerRegistry.getActiveId();
+    minimapHud.update(
+      observerRegistry.all().map((entry) => {
+        const { latDeg, lonDeg } = entry.station.getLatLon();
+        return { latDeg, lonDeg, color: entry.color, active: entry.id === activeObserverId };
+      }),
+    );
+  }
 
   const camera = cameraManager.getActiveCamera();
   cameraDirection.copy(camera.position).normalize();

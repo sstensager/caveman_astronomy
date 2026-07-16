@@ -59,3 +59,22 @@ export const MOON_NODAL_REGRESSION_PERIOD_DAYS = 6798.38;
  *  no real-world epoch to anchor this to either (see
  *  EARTH_ARGUMENT_OF_PERIHELION_DEG above). */
 export const MOON_ASCENDING_NODE_DEG_AT_EPOCH = 0;
+
+/** The one real-world calendar instant simulated t=0 corresponds to - see
+ *  src/astronomy/calendar.ts for the day<->Date conversion this anchors.
+ *  Every model computes Earth's mean anomaly as (time / EARTH_ORBIT_PERIOD_DAYS)
+ *  * 2*PI, i.e. mean anomaly is implicitly 0 (perihelion) at t=0 - so rather
+ *  than adding a separate "mean anomaly at epoch" offset, this epoch is
+ *  chosen to itself BE a real Earth perihelion passage (Earth passes
+ *  perihelion every year in early January). That makes day-0 correct by
+ *  construction and season timing (equinoxes/solstices) fall out right,
+ *  since obliquity and the argument of perihelion above are already real
+ *  values consistently wired through the ecliptic<->world frame (see
+ *  frames.ts). Nearest-day precision only, not ephemeris-grade timing - this
+ *  sim doesn't need to-the-minute accuracy. The Moon's mean anomaly is ALSO
+ *  implicitly 0 (perigee) at t=0, and there's no real date that's both a
+ *  real Earth-perihelion and a real Moon-perigee at once - so Moon phase on
+ *  any picked calendar date is whatever this simplified model produces, not
+ *  the true real-world phase for that date. That's an accepted rough edge,
+ *  not a bug. */
+export const SIMULATION_EPOCH_UTC_MS = Date.UTC(2024, 0, 3);

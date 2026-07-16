@@ -169,3 +169,100 @@
 input[type="range"] {
   width: 100%;
 }
+
+/* Deliberately separate from .control-panel: always visible regardless of
+   the panel's collapsed sections/scroll, top-RIGHT so it never collides with
+   the panel's own top-left placement. */
+.time-hud {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 10;
+  padding: 10px 14px;
+  background: rgba(10, 12, 20, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  color: #f0f0f5;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+  text-align: right;
+  user-select: none;
+  pointer-events: none;
+}
+
+.time-hud-date {
+  font-weight: 600;
+}
+
+.time-hud-speed {
+  color: rgba(240, 240, 245, 0.6);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Bottom-right so it collides with neither .control-panel (top-left) nor
+   .time-hud (top-right). position:relative so the toggle button can anchor
+   to this container regardless of the canvas's own size. */
+.minimap-hud {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  z-index: 10;
+  padding: 6px;
+  background: rgba(10, 12, 20, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 10px;
+  backdrop-filter: blur(6px);
+  user-select: none;
+  /* Unlike TimeHud, this widget has interactive controls (the minimize
+     button, and the map itself while minimized) - pointer-events is
+     re-enabled explicitly on each of those elements below. */
+  pointer-events: none;
+}
+
+.minimap-hud-canvas {
+  display: block;
+  border-radius: 4px;
+  width: 200px;
+  height: 100px;
+  transition:
+    opacity 0.15s ease,
+    width 0.15s ease,
+    height 0.15s ease;
+  /* Re-enabled here (not just the toggle button) so the shrunken map is
+     itself clickable to restore - see MinimapHud.update's doc comment. */
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+.minimap-hud-toggle {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  z-index: 1;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  background: rgba(10, 12, 20, 0.9);
+  color: #f0f0f5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.minimap-hud-toggle:hover {
+  background: rgba(30, 34, 48, 0.95);
+}
+
+/* Collapsed: shrink the map's DISPLAYED size only (its internal drawing
+   resolution is untouched, see MinimapHud's constructor) - the container
+   just follows its child's size naturally, no manual width/height override
+   needed here, which is what previously let the corner button's intentional
+   overflow render partially outside the viewport. */
+.minimap-hud-minimized .minimap-hud-canvas {
+  width: 70px;
+  height: 35px;
+}

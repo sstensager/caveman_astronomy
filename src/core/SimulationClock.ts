@@ -32,6 +32,13 @@ export class SimulationClock {
     this.elapsedSeconds += days * SIMULATED_DAY_DURATION_SECONDS;
   }
 
+  /** Jumps simulated time to an ABSOLUTE day count (as opposed to
+   *  addElapsedDays' relative jump) - used by the date picker to set the
+   *  clock directly to whatever day a chosen calendar date maps to. */
+  setElapsedDays(days: number): void {
+    this.elapsedSeconds = days * SIMULATED_DAY_DURATION_SECONDS;
+  }
+
   reset(): void {
     this.elapsedSeconds = 0;
   }

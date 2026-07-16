@@ -47,6 +47,8 @@ export const SCENE_PRESETS: ScenePreset[] = [
       earthOrbitLine: false,
       celestialSphereShell: false,
       observerMarkers: false,
+      groundScatter: false,
+      stonehenge: false,
     },
     cameraMode: CameraMode.Space,
   },

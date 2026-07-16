@@ -11,6 +11,16 @@ describe("SimulationClock", () => {
     expect(clock.getElapsedDays()).toBeCloseTo(0.5, 10);
   });
 
+  it("setElapsedDays jumps to an absolute day count, ignoring prior elapsed time", () => {
+    const clock = new SimulationClock();
+    clock.addElapsedDays(100);
+    clock.setElapsedDays(5);
+    expect(clock.getElapsedDays()).toBeCloseTo(5, 10);
+
+    clock.setElapsedDays(-3.5);
+    expect(clock.getElapsedDays()).toBeCloseTo(-3.5, 10);
+  });
+
   it("reset zeroes elapsed simulated time", () => {
     const clock = new SimulationClock();
     clock.addElapsedDays(10);

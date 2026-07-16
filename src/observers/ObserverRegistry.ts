@@ -10,6 +10,10 @@ export interface ObserverEntry {
   readonly station: ObserverStation;
   readonly observer: GroundObserver;
   readonly marker: ObserverMarker;
+  /** Same 0xRRGGBB value passed to this entry's marker/zenith/grid - kept
+   *  here too (not read back from those) so other consumers (e.g.
+   *  MinimapHud) don't need a color-extraction API on those classes. */
+  readonly color: number;
   /** Each entry's own zenith/grid, bound to THIS entry's observer (never
    *  "whichever is active") - independently toggleable per observer, see
    *  main.ts's createObserverEntry. Both track the shared sky radius (see

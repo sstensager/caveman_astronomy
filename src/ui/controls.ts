@@ -75,6 +75,43 @@ export function createSlider(options: SliderOptions): SliderControl {
   return { element, input };
 }
 
+export interface DateInputOptions {
+  label: string;
+  value: Date;
+  onChange: (date: Date) => void;
+}
+
+export interface DateInputControl {
+  element: HTMLElement;
+  input: HTMLInputElement;
+}
+
+/** A calendar date picker row, styled like createSlider's row (label +
+ *  input) but for jumping the simulation clock to an absolute date instead
+ *  of dragging a range. `<input type="date">`'s value is a "YYYY-MM-DD"
+ *  string, which the Date constructor parses as UTC midnight - matching
+ *  SIMULATION_EPOCH_UTC_MS's own UTC anchor (see astronomy/calendar.ts). */
+export function createDateInput(options: DateInputOptions): DateInputControl {
+  const element = document.createElement("div");
+  element.className = "control-slider";
+
+  const label = document.createElement("label");
+  label.className = "control-label";
+  label.textContent = options.label;
+
+  const input = document.createElement("input");
+  input.type = "date";
+  input.value = options.value.toISOString().slice(0, 10);
+  input.addEventListener("change", () => {
+    if (!input.value) return;
+    options.onChange(new Date(input.value));
+  });
+
+  element.appendChild(label);
+  element.appendChild(input);
+  return { element, input };
+}
+
 /** A single standalone action button - not a mutually-exclusive group like
  *  createButtonGroup (no "active" state), just a momentary click action
  *  (e.g. "Reset to 23.44deg" next to a slider). */

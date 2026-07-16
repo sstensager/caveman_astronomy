@@ -43,6 +43,7 @@ export class OrbitCameraRig implements CameraRig {
   private maxDistance: number;
   private upMode: CameraUpMode = CameraUpMode.Equatorial;
   private followTargetGetter?: () => THREE.Vector3;
+  private lookAtTargetGetter?: () => THREE.Vector3;
 
   constructor(options: OrbitCameraRigOptions) {
     this.camera = new THREE.PerspectiveCamera(options.fov ?? 50, 1, options.near ?? 0.1, options.far ?? 20000);
@@ -105,7 +106,7 @@ export class OrbitCameraRig implements CameraRig {
   }
 
   /** "Center on and follow this body" - see main.ts's BodyTargetPicker/
-   *  setTargetedBody. Each update() eases controls.target toward the
+   *  setAnchorBody. Each update() eases controls.target toward the
    *  getter's current world position instead of snapping instantly, which
    *  reads as the camera smoothly swinging to re-center on the body while
    *  preserving whatever distance/angle the user was already viewing from:
@@ -118,6 +119,23 @@ export class OrbitCameraRig implements CameraRig {
    *  escape/click-away release leaving the view exactly where it is. */
   setFollowTarget(getter: (() => THREE.Vector3) | undefined): void {
     this.followTargetGetter = getter;
+  }
+
+  /** Independent of setFollowTarget: while the follow target (if any) drives
+   *  controls.target - i.e. WHERE the camera orbits around/sits relative to
+   *  - this drives WHERE the camera actually points, overriding the
+   *  lookAt(target) that controls.update() performs internally every frame.
+   *  Lets you anchor position near one body (e.g. orbit-drag out from the
+   *  Sun) while facing a completely different one (e.g. Earth, to watch its
+   *  day/night terminator). Safe to override camera.quaternion like this
+   *  because OrbitControls' own spherical state (used to derive next
+   *  frame's camera.position from drag deltas) never reads camera.quaternion
+   *  back - only controls.target and its accumulated spherical offset - so
+   *  this doesn't corrupt future drag/zoom behavior. Pass undefined to
+   *  release, leaving the camera facing wherever it last pointed (matching
+   *  setFollowTarget's own release behavior). */
+  setLookAtTarget(getter: (() => THREE.Vector3) | undefined): void {
+    this.lookAtTargetGetter = getter;
   }
 
   setActive(active: boolean): void {
@@ -138,6 +156,9 @@ export class OrbitCameraRig implements CameraRig {
       this.controls.target.lerp(this.followTargetGetter(), FOLLOW_TARGET_EASE);
     }
     this.controls.update();
+    if (this.lookAtTargetGetter) {
+      this.camera.lookAt(this.lookAtTargetGetter());
+    }
   }
 
   setAspect(aspect: number): void {
