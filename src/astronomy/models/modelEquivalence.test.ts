@@ -1,12 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { GeocentricModel } from "./GeocentricModel";
 import { ModernHeliocentricModel } from "./ModernHeliocentricModel";
-import { BodyIds } from "../types";
+import { BodyIds, type BodyId } from "../types";
+import { PLANET_ORBITAL_ELEMENTS } from "../constants";
 import { length, subVectors } from "../vectorMath";
 
 const SAMPLE_TIMES = [0, 10, 91.3, 200, 365.25, 1000.7];
 
-function directionFromEarth(state: ReturnType<GeocentricModel["getState"]>, bodyId: typeof BodyIds.Sun | typeof BodyIds.Moon) {
+function directionFromEarth(state: ReturnType<GeocentricModel["getState"]>, bodyId: BodyId) {
   const earth = state.bodies[BodyIds.Earth];
   const body = state.bodies[bodyId];
   const relative = subVectors(body.position, earth.position);
@@ -36,5 +37,21 @@ describe("GeocentricModel vs ModernHeliocentricModel equivalence", () => {
       expect(g.y).toBeCloseTo(h.y, 10);
       expect(g.z).toBeCloseTo(h.z, 10);
     }
+  });
+
+  // The planets have no mirror-trick shortcut (see GeocentricModel's doc
+  // comment) - their geocentric position is real vector subtraction, so
+  // this is the test that would actually catch a sign/order bug in that
+  // subtraction (e.g. earthHelio - planetHelio instead of the reverse).
+  describe.each(Object.keys(PLANET_ORBITAL_ELEMENTS) as BodyId[])("planet: %s", (bodyId) => {
+    it("agree on normalized direction-from-Earth at every sampled time", () => {
+      for (const t of SAMPLE_TIMES) {
+        const g = directionFromEarth(geo.getState(t), bodyId);
+        const h = directionFromEarth(helio.getState(t), bodyId);
+        expect(g.x).toBeCloseTo(h.x, 10);
+        expect(g.y).toBeCloseTo(h.y, 10);
+        expect(g.z).toBeCloseTo(h.z, 10);
+      }
+    });
   });
 });

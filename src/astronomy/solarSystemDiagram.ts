@@ -1,7 +1,39 @@
-import type { UniverseState, Vector3Like } from "./types";
+import type { BodyId, UniverseState, Vector3Like } from "./types";
 import { BodyIds } from "./types";
 import { eclipticToWorld } from "./frames";
 import { subVectors } from "./vectorMath";
+
+/**
+ * A body's offset from EARTH - rotated into world space and scaled by
+ * `scale` - the general form of getSunOffsetFromEarth/getMoonOffsetFromEarth
+ * below (both now thin wrappers over this), and what each planet marker's
+ * getPosition closure in main.ts calls directly. Provably model-agnostic
+ * for any bodyId the same way the Sun/Moon-specific forms already are (see
+ * their own doc comments) - it's the same subtract-then-rotate-then-scale
+ * computation regardless of which body is named.
+ */
+export function getBodyOffsetFromEarth(state: UniverseState, bodyId: BodyId, scale: number): Vector3Like {
+  const rel = eclipticToWorld(subVectors(state.bodies[bodyId].position, state.bodies[BodyIds.Earth].position));
+  return { x: rel.x * scale, y: rel.y * scale, z: rel.z * scale };
+}
+
+/**
+ * A body's offset from the SUN - rotated into world space and scaled by
+ * `scale` - the general form of getEarthDiagramPosition below (now a thin
+ * wrapper over this). Used for a planet's real Sun-centered orbital
+ * position independent of Earth - e.g. main.ts's Geocentric deferent/
+ * epicycle construction, which decomposes a planet's true geocentric
+ * position into two real Sun-relative ellipses (see PLANET_ORBITAL_ELEMENTS'
+ * own doc comment for the underlying algebra: bodyPos-Earth = (bodyPos-Sun)
+ * - (Earth-Sun), i.e. exactly the sum of two independent Sun-relative
+ * offsets, which is what makes a real deferent+epicycle decomposition exact
+ * rather than approximate for circular orbits, and very close for our small
+ * eccentricities).
+ */
+export function getBodyOffsetFromSun(state: UniverseState, bodyId: BodyId, scale: number): Vector3Like {
+  const rel = eclipticToWorld(subVectors(state.bodies[bodyId].position, state.bodies[BodyIds.Sun].position));
+  return { x: rel.x * scale, y: rel.y * scale, z: rel.z * scale };
+}
 
 /**
  * Earth's world position under main.ts's Heliocentric Scene - Earth-
@@ -18,8 +50,7 @@ import { subVectors } from "./vectorMath";
  * no separate proof needed. See solarSystemDiagram.test.ts.
  */
 export function getEarthDiagramPosition(state: UniverseState, orbitScale: number): Vector3Like {
-  const rel = eclipticToWorld(subVectors(state.bodies[BodyIds.Earth].position, state.bodies[BodyIds.Sun].position));
-  return { x: rel.x * orbitScale, y: rel.y * orbitScale, z: rel.z * orbitScale };
+  return getBodyOffsetFromSun(state, BodyIds.Earth, orbitScale);
 }
 
 /**
@@ -38,8 +69,7 @@ export function getEarthDiagramPosition(state: UniverseState, orbitScale: number
  * solarSystemDiagram.test.ts.
  */
 export function getMoonOffsetFromEarth(state: UniverseState, moonOrbitScale: number): Vector3Like {
-  const rel = eclipticToWorld(subVectors(state.bodies[BodyIds.Moon].position, state.bodies[BodyIds.Earth].position));
-  return { x: rel.x * moonOrbitScale, y: rel.y * moonOrbitScale, z: rel.z * moonOrbitScale };
+  return getBodyOffsetFromEarth(state, BodyIds.Moon, moonOrbitScale);
 }
 
 /**
@@ -57,6 +87,5 @@ export function getMoonOffsetFromEarth(state: UniverseState, moonOrbitScale: num
  * re-confirmed directly in solarSystemDiagram.test.ts for this scaled form.
  */
 export function getSunOffsetFromEarth(state: UniverseState, sunOrbitScale: number): Vector3Like {
-  const rel = eclipticToWorld(subVectors(state.bodies[BodyIds.Sun].position, state.bodies[BodyIds.Earth].position));
-  return { x: rel.x * sunOrbitScale, y: rel.y * sunOrbitScale, z: rel.z * sunOrbitScale };
+  return getBodyOffsetFromEarth(state, BodyIds.Sun, sunOrbitScale);
 }

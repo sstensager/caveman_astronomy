@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as THREE from "three";
 import { GroundObserver } from "./GroundObserver";
-import { BodyIds, type BodyId, type UniverseState } from "../astronomy/types";
+import { BodyIds, type BodyId, type BodyState, type UniverseState } from "../astronomy/types";
 import { EARTH_AXIAL_TILT_DEG } from "../astronomy/constants";
 
 const OBLIQUITY_RAD = THREE.MathUtils.degToRad(EARTH_AXIAL_TILT_DEG);
@@ -30,11 +30,16 @@ function equatorStationFixture(): THREE.Object3D {
   return station;
 }
 
+const PLANET_IDS = [BodyIds.Mercury, BodyIds.Venus, BodyIds.Mars, BodyIds.Jupiter, BodyIds.Saturn] as const;
+
 function stateWithBodyAt(bodyId: BodyId, position: THREE.Vector3): UniverseState {
   const identityOrientation = { x: 0, y: 0, z: 0, w: 1 };
   return {
     time: 0,
     bodies: {
+      ...(Object.fromEntries(
+        PLANET_IDS.map((id) => [id, { id, position: { x: 0, y: 0, z: 0 }, orientation: identityOrientation, radius: 1 }]),
+      ) as Record<BodyId, BodyState>),
       [BodyIds.Sun]: { id: BodyIds.Sun, position: { x: 0, y: 0, z: 0 }, orientation: identityOrientation, radius: 1 },
       [BodyIds.Earth]: { id: BodyIds.Earth, position: { x: 0, y: 0, z: 0 }, orientation: identityOrientation, radius: 1 },
       [BodyIds.Moon]: { id: BodyIds.Moon, position: { x: 0, y: 0, z: 0 }, orientation: identityOrientation, radius: 1 },
@@ -94,7 +99,7 @@ describe("GroundObserver.getDirectionTo", () => {
   it("throws for an unknown body id", () => {
     const observer = new GroundObserver("ground", equatorStationFixture());
     const state = stateWithBodyAt(BodyIds.Sun, new THREE.Vector3(1, 0, 0));
-    expect(() => observer.getDirectionTo("mars" as BodyId, state)).toThrow();
+    expect(() => observer.getDirectionTo("pluto" as BodyId, state)).toThrow();
   });
 
   it("hand-computed: Sun directly overhead reads as zenith (direction parallel to local up)", () => {

@@ -90,6 +90,8 @@ export class OrbitingBodyMarkerLayer implements Layer {
   private readonly spinMode: "still" | "tidalLocked";
   private readonly sunDirection = new THREE.Vector3(1, 0, 0);
   private readonly skyColor = new THREE.Color(0x000000);
+  private readonly material: THREE.MeshBasicMaterial | THREE.MeshStandardMaterial;
+  private readonly baseColor: THREE.Color;
   private darkSideBrightness: number;
   private darkSideUniforms?: DarkSideUniforms;
 
@@ -112,6 +114,8 @@ export class OrbitingBodyMarkerLayer implements Layer {
       texture.colorSpace = THREE.SRGBColorSpace;
       material.map = texture;
     }
+    this.material = material;
+    this.baseColor = material.color.clone();
 
     if (options.lit && options.darkSideBrightness !== undefined) {
       const standardMaterial = material as THREE.MeshStandardMaterial;
@@ -183,6 +187,18 @@ export class OrbitingBodyMarkerLayer implements Layer {
    *  in the SAME local units the constructor's `markerSize` option is. */
   setMarkerSize(size: number): void {
     this.object3D.scale.setScalar(size / this.baseMarkerSize);
+  }
+
+  /** Live brightness multiplier on this marker's own base color (the color
+   *  passed at construction, or white if textured) - see the Planets
+   *  section's "Visibility Boost" slider (main.ts). 1 reproduces the
+   *  original color exactly; values above 1 push each channel toward (and
+   *  past, letting the renderer clip) white, a cheap way to make a small,
+   *  flat, unlit marker pop against the black background without touching
+   *  its geometry. Works regardless of lit/unlit - just scales whatever
+   *  the material's own diffuse color is. */
+  setColorBrightness(multiplier: number): void {
+    this.material.color.copy(this.baseColor).multiplyScalar(multiplier);
   }
 
   /** Pushed once per frame from main.ts's render loop (see

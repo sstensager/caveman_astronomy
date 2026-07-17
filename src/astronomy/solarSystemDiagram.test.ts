@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { getEarthDiagramPosition, getMoonOffsetFromEarth, getSunOffsetFromEarth } from "./solarSystemDiagram";
+import { getBodyOffsetFromEarth, getBodyOffsetFromSun, getEarthDiagramPosition, getMoonOffsetFromEarth, getSunOffsetFromEarth } from "./solarSystemDiagram";
 import { GeocentricModel } from "./models/GeocentricModel";
 import { ModernHeliocentricModel } from "./models/ModernHeliocentricModel";
 import { eclipticToWorld } from "./frames";
@@ -91,6 +91,116 @@ describe("getSunOffsetFromEarth", () => {
       expect(g.x).toBeCloseTo(h.x, 8);
       expect(g.y).toBeCloseTo(h.y, 8);
       expect(g.z).toBeCloseTo(h.z, 8);
+    }
+  });
+});
+
+describe("getBodyOffsetFromEarth", () => {
+  const MARS_ORBIT_SCALE = 0.47;
+
+  it("equals eclipticToWorld(body - earth) * scale for a non-Sun/Moon body (Mars)", () => {
+    const model = new ModernHeliocentricModel();
+    const state = model.getState(88.8);
+    const expected = eclipticToWorld(subVectors(state.bodies[BodyIds.Mars].position, state.bodies[BodyIds.Earth].position));
+
+    const actual = getBodyOffsetFromEarth(state, BodyIds.Mars, MARS_ORBIT_SCALE);
+    expect(actual.x).toBeCloseTo(expected.x * MARS_ORBIT_SCALE, 10);
+    expect(actual.y).toBeCloseTo(expected.y * MARS_ORBIT_SCALE, 10);
+    expect(actual.z).toBeCloseTo(expected.z * MARS_ORBIT_SCALE, 10);
+  });
+
+  it("is identical whether GeocentricModel or ModernHeliocentricModel computes it, for Mars", () => {
+    const geo = new GeocentricModel();
+    const helio = new ModernHeliocentricModel();
+    for (const t of SAMPLE_TIMES) {
+      const g = getBodyOffsetFromEarth(geo.getState(t), BodyIds.Mars, MARS_ORBIT_SCALE);
+      const h = getBodyOffsetFromEarth(helio.getState(t), BodyIds.Mars, MARS_ORBIT_SCALE);
+      expect(g.x).toBeCloseTo(h.x, 8);
+      expect(g.y).toBeCloseTo(h.y, 8);
+      expect(g.z).toBeCloseTo(h.z, 8);
+    }
+  });
+
+  it("getSunOffsetFromEarth is a thin wrapper equal to getBodyOffsetFromEarth(state, Sun, scale)", () => {
+    const model = new ModernHeliocentricModel();
+    const state = model.getState(17.5);
+    const viaWrapper = getSunOffsetFromEarth(state, MARS_ORBIT_SCALE);
+    const viaGeneric = getBodyOffsetFromEarth(state, BodyIds.Sun, MARS_ORBIT_SCALE);
+    expect(viaWrapper).toEqual(viaGeneric);
+  });
+});
+
+describe("getBodyOffsetFromSun", () => {
+  const SCALE = 0.6;
+
+  it("equals eclipticToWorld(body - sun) * scale for a non-Earth body (Mars)", () => {
+    const model = new ModernHeliocentricModel();
+    const state = model.getState(200.4);
+    const expected = eclipticToWorld(subVectors(state.bodies[BodyIds.Mars].position, state.bodies[BodyIds.Sun].position));
+
+    const actual = getBodyOffsetFromSun(state, BodyIds.Mars, SCALE);
+    expect(actual.x).toBeCloseTo(expected.x * SCALE, 10);
+    expect(actual.y).toBeCloseTo(expected.y * SCALE, 10);
+    expect(actual.z).toBeCloseTo(expected.z * SCALE, 10);
+  });
+
+  it("is identical whether GeocentricModel or ModernHeliocentricModel computes it, for Mars", () => {
+    const geo = new GeocentricModel();
+    const helio = new ModernHeliocentricModel();
+    for (const t of SAMPLE_TIMES) {
+      const g = getBodyOffsetFromSun(geo.getState(t), BodyIds.Mars, SCALE);
+      const h = getBodyOffsetFromSun(helio.getState(t), BodyIds.Mars, SCALE);
+      expect(g.x).toBeCloseTo(h.x, 8);
+      expect(g.y).toBeCloseTo(h.y, 8);
+      expect(g.z).toBeCloseTo(h.z, 8);
+    }
+  });
+
+  it("getEarthDiagramPosition is a thin wrapper equal to getBodyOffsetFromSun(state, Earth, scale)", () => {
+    const model = new ModernHeliocentricModel();
+    const state = model.getState(303.1);
+    const viaWrapper = getEarthDiagramPosition(state, SCALE);
+    const viaGeneric = getBodyOffsetFromSun(state, BodyIds.Earth, SCALE);
+    expect(viaWrapper).toEqual(viaGeneric);
+  });
+});
+
+// The decisive correctness check for main.ts's Geocentric deferent+epicycle
+// construction (see planetLayers' own doc comment there): a planet's real
+// geocentric position is planetHelio - earthHelio, split at the minus sign
+// into a "deferent carrier" term and an "epicycle" term. This proves the two
+// terms recombine EXACTLY back into the real geocentric offset - the same
+// vector getBodyOffsetFromEarth already computes and the planet's own
+// marker already uses - for both a superior planet (deferent carries
+// +planetHelio, epicycle carries -earthHelio) and an inferior one (deferent
+// carries -earthHelio, epicycle carries +planetHelio). Pure vector algebra,
+// so this holds exactly, not approximately, and for any AstronomyModel.
+describe("deferent + epicycle decomposition (main.ts's Geocentric planet orbit lines)", () => {
+  const SCALE = 0.35;
+
+  it("superior planet (Mars): getBodyOffsetFromSun(Mars) + getSunOffsetFromEarth == getBodyOffsetFromEarth(Mars)", () => {
+    const geo = new GeocentricModel();
+    for (const t of SAMPLE_TIMES) {
+      const state = geo.getState(t);
+      const deferentCarrier = getBodyOffsetFromSun(state, BodyIds.Mars, SCALE);
+      const epicycleOffset = getSunOffsetFromEarth(state, SCALE);
+      const marker = getBodyOffsetFromEarth(state, BodyIds.Mars, SCALE);
+      expect(deferentCarrier.x + epicycleOffset.x).toBeCloseTo(marker.x, 10);
+      expect(deferentCarrier.y + epicycleOffset.y).toBeCloseTo(marker.y, 10);
+      expect(deferentCarrier.z + epicycleOffset.z).toBeCloseTo(marker.z, 10);
+    }
+  });
+
+  it("inferior planet (Venus): getSunOffsetFromEarth + getBodyOffsetFromSun(Venus) == getBodyOffsetFromEarth(Venus)", () => {
+    const geo = new GeocentricModel();
+    for (const t of SAMPLE_TIMES) {
+      const state = geo.getState(t);
+      const deferentCarrier = getSunOffsetFromEarth(state, SCALE);
+      const epicycleOffset = getBodyOffsetFromSun(state, BodyIds.Venus, SCALE);
+      const marker = getBodyOffsetFromEarth(state, BodyIds.Venus, SCALE);
+      expect(deferentCarrier.x + epicycleOffset.x).toBeCloseTo(marker.x, 10);
+      expect(deferentCarrier.y + epicycleOffset.y).toBeCloseTo(marker.y, 10);
+      expect(deferentCarrier.z + epicycleOffset.z).toBeCloseTo(marker.z, 10);
     }
   });
 });

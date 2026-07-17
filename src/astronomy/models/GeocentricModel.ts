@@ -1,5 +1,5 @@
-import { BodyIds, type AstronomyModel, type BodyState, type SimulationTime, type UniverseState } from "../types";
-import { ellipticalOrbitPosition, inclinedEllipticalOrbitPosition } from "../vectorMath";
+import { BodyIds, type AstronomyModel, type BodyState, type PlanetId, type SimulationTime, type UniverseState } from "../types";
+import { ellipticalOrbitPosition, inclinedEllipticalOrbitPosition, subVectors } from "../vectorMath";
 import {
   EARTH_ARGUMENT_OF_PERIHELION_DEG,
   EARTH_ORBIT_ECCENTRICITY,
@@ -12,7 +12,14 @@ import {
   MOON_ORBIT_INCLINATION_DEG,
   MOON_ORBIT_PERIOD_DAYS,
   MOON_ORBIT_RADIUS,
+  PLANET_ORBITAL_ELEMENTS,
 } from "../constants";
+import { earthHeliocentricPosition, planetHeliocentricPosition } from "../planetPositions";
+
+// Placeholder display radius shared by every planet marker - unused this
+// iteration, same rationale as SUN_BODY_RADIUS/EARTH_BODY_RADIUS/
+// MOON_BODY_RADIUS below (schema-only slot, markers are fixed-size dots).
+const PLANET_BODY_RADIUS = 1;
 
 const TWO_PI = Math.PI * 2;
 const DEG_TO_RAD = Math.PI / 180;
@@ -54,6 +61,15 @@ const MOON_ARGUMENT_OF_PERIGEE_RAD = MOON_ARGUMENT_OF_PERIGEE_DEG * DEG_TO_RAD;
  * inclinedEllipticalOrbitPosition call here (without adding a moving-Earth
  * offset, since Earth is fixed at the origin) reproduces an identical Moon
  * direction automatically.
+ *
+ * The 5 planets have no such shortcut available: a planet's geocentric
+ * position is NOT a simple mirror of anything, since it doesn't orbit Earth
+ * on any real ellipse (that's precisely why Ptolemy needed epicycles). So
+ * each planet's geocentric position is computed the honest way - its real
+ * heliocentric position (planetHeliocentricPosition) minus Earth's real
+ * heliocentric position (earthHeliocentricPosition, the same computation the
+ * Sun's mirror trick above sidesteps) - real vector subtraction that
+ * naturally reproduces retrograde apparent motion for the outer planets.
  */
 export class GeocentricModel implements AstronomyModel {
   readonly id = "geocentric";
@@ -98,12 +114,27 @@ export class GeocentricModel implements AstronomyModel {
       radius: MOON_BODY_RADIUS,
     };
 
+    const earthHelio = earthHeliocentricPosition(time);
+    const planetBodies = Object.fromEntries(
+      Object.entries(PLANET_ORBITAL_ELEMENTS).map(([id, elements]) => {
+        const body: BodyState = {
+          id: id as PlanetId,
+          parentId: BodyIds.Earth,
+          position: subVectors(planetHeliocentricPosition(elements, time), earthHelio),
+          orientation: IDENTITY_ORIENTATION,
+          radius: PLANET_BODY_RADIUS,
+        };
+        return [id, body];
+      }),
+    ) as Record<PlanetId, BodyState>;
+
     return {
       time,
       bodies: {
         [BodyIds.Sun]: sun,
         [BodyIds.Earth]: earth,
         [BodyIds.Moon]: moon,
+        ...planetBodies,
       },
     };
   }

@@ -127,6 +127,84 @@ export interface ObserverEntryDef {
   label: string;
 }
 
+/** One planet's own marker/path toggles - the planets analog of
+ *  ObserverEntryPanelConfig below, array-driven for the same reason (5
+ *  near-identical entries, unlike Sun/Moon's flat hand-named fields in
+ *  SunAndMoonPanelConfig). No distance/size slider - see
+ *  PlanetsPanelConfig's doc comment.
+ *
+ *  Four distinct paths, each answering a different question (see main.ts's
+ *  planetLayers doc comment for the full reasoning):
+ *  - `orbitLine` ("Tychonic Path"): the real, mathematically EXACT position
+ *    decomposed into two legible circles (a Sun-relative ellipse in
+ *    Heliocentric; a deferent+epicycle pair in Geocentric where the Sun
+ *    genuinely carries the planet, matching Tycho Brahe's real
+ *    geo-heliocentric system - for Mercury/Venus specifically this
+ *    generalizes Heraclides of Pontus's earlier partial version of the
+ *    same idea).
+ *  - `ptolemaic` ("Ptolemaic Path", Geocentric only): the REAL historical
+ *    Ptolemaic construction, deliberately imperfect for Mercury/Venus - a
+ *    deferent+epicycle scaled down so their combined reach never exceeds
+ *    the Sun's own distance (the actual "nested crystalline spheres don't
+ *    overlap" cosmological assumption), correctly preserving apparent
+ *    DIRECTION but unable to place the planet on the far side of the Sun -
+ *    structurally incapable of showing Venus's gibbous phases, which is
+ *    exactly why that 1610 observation broke the model. For Mars/Jupiter/
+ *    Saturn this is identical to the Tychonic path - Ptolemy's real
+ *    superior-planet epicycles (epicycle radius vector always parallel to
+ *    the Earth-Sun line) already happen to be mathematically exact.
+ *  - `truePath` (Geocentric only): the SAME exact real position as
+ *    `orbitLine`, NOT decomposed - the actual compound curve a planet
+ *    traces relative to Earth. Proves the Tychonic deferent+epicycle pair
+ *    is exactly this curve, not an approximation of it.
+ *  - `skyPath`: direction ONLY (no real distance), projected onto the
+ *    shared sky radius - literally "which way do I point a telescope,
+ *    relative to the fixed stars" - the actual historical problem
+ *    Ptolemy's epicycles were built to predict. */
+export interface PlanetEntryPanelConfig {
+  id: string;
+  label: string;
+  marker: ToggleConfig;
+  orbitLine: ToggleConfig;
+  ptolemaic: ToggleConfig;
+  truePath: ToggleConfig;
+  skyPath: ToggleConfig;
+}
+
+/** The 5 naked-eye planets' controls, one collapsible row per planet (see
+ *  buildPlanetToggleRow) - modeled on ObserverPanelConfig.observerToggles's
+ *  array-driven pattern rather than SunAndMoonPanelConfig's flat hand-named
+ *  fields, since these 5 bodies are regular enough that per-body free
+ *  fields would just be duplication. No distance slider per planet -
+ *  unlike Sun/Moon, a planet's distance is real-derived from its own
+ *  orbital elements plus the shared Sun-distance scale, not an artistic
+ *  free parameter (see config/planets.ts). `allMarkersVisible`/
+ *  `allOrbitLinesVisible`/`allPtolemaicVisible`/`allTruePathsVisible`/
+ *  `allSkyPathsVisible` are master toggles fanning out to every entry's own
+ *  checkbox (and syncing them via ControlPanel.syncLayerToggles) - planets
+ *  are small and easy to miss individually, so a single "show them all"
+ *  action matters more here than it does for Sun/Moon's own 2-body
+ *  section. `visibilityBoost` is a single slider scaling every planet's
+ *  marker size AND color brightness together, for the same reason.
+ *  `labelsVisible` shows each planet's name near its own marker - since
+ *  paths share their planet's own color, this doubles as identifying which
+ *  path belongs to which planet. `pathLabelsVisible` goes one step further -
+ *  a "{Planet} {Path Type}" label anchored on each individual VISIBLE path
+ *  (not just the marker), for when multiple same-colored paths for one
+ *  planet are shown at once and even the marker label can't disambiguate
+ *  which line is which. */
+export interface PlanetsPanelConfig {
+  allMarkersVisible: ToggleConfig;
+  allOrbitLinesVisible: ToggleConfig;
+  allPtolemaicVisible: ToggleConfig;
+  allTruePathsVisible: ToggleConfig;
+  allSkyPathsVisible: ToggleConfig;
+  labelsVisible: ToggleConfig;
+  pathLabelsVisible: ToggleConfig;
+  visibilityBoost: SliderConfig;
+  entries: PlanetEntryPanelConfig[];
+}
+
 /** One observer's own Zenith/Grid toggles - independent of which observer
  *  is "active" (see ObserverRegistry's doc comment). */
 export interface ObserverEntryPanelConfig {
@@ -186,6 +264,7 @@ export interface ControlPanelConfig {
   };
   stonehenge: StonehengePanelConfig;
   sunAndMoon: SunAndMoonPanelConfig;
+  planets: PlanetsPanelConfig;
   sky: SkyPanelConfig;
   observer: ObserverPanelConfig;
   camera: {
@@ -282,6 +361,7 @@ export class ControlPanel {
     this.element.appendChild(this.buildEarthSection(config));
     this.element.appendChild(this.buildStonehengeSection(config));
     this.element.appendChild(this.buildSunAndMoonSection(config));
+    this.element.appendChild(this.buildPlanetsSection(config));
     this.element.appendChild(this.buildSkySection(config));
     this.element.appendChild(this.buildObserverSection(config));
     this.element.appendChild(this.buildSelectedStarSection());
@@ -578,6 +658,43 @@ export class ControlPanel {
       createSlider({ ...sm.sunSize, label: "Sun Size" }).element,
       createSlider({ ...sm.moonSize, label: "Moon Size" }).element,
       createSlider({ ...sm.moonDarkSideBrightness, label: "Moon Dark Side Brightness" }).element,
+    ]);
+  }
+
+  /** One collapsible row per planet - see PlanetsPanelConfig's doc comment
+   *  for why this mirrors buildObserverSection's array-driven pattern
+   *  rather than buildSunAndMoonSection's flat hand-named fields. Unlike
+   *  Observer's rows, planets are fixed at construction (no "Add Planet"),
+   *  so there's no addPlanetToggleRow counterpart to addObserverToggleRow. */
+  private buildPlanetsSection(config: ControlPanelConfig): HTMLElement {
+    const planets = config.planets;
+    const rows = planets.entries.map((entry) => this.buildPlanetToggleRow(entry));
+    return createSection("Planets", false, [
+      createCheckbox("Show All Planets", planets.allMarkersVisible.checked, planets.allMarkersVisible.onChange).element,
+      createCheckbox("Show All Tychonic Paths", planets.allOrbitLinesVisible.checked, planets.allOrbitLinesVisible.onChange).element,
+      createCheckbox("Show All Ptolemaic Paths", planets.allPtolemaicVisible.checked, planets.allPtolemaicVisible.onChange).element,
+      createCheckbox("Show All True Paths", planets.allTruePathsVisible.checked, planets.allTruePathsVisible.onChange).element,
+      createCheckbox("Show All Sky Paths", planets.allSkyPathsVisible.checked, planets.allSkyPathsVisible.onChange).element,
+      createCheckbox("Show Planet Labels", planets.labelsVisible.checked, planets.labelsVisible.onChange).element,
+      createCheckbox("Show Path Labels", planets.pathLabelsVisible.checked, planets.pathLabelsVisible.onChange).element,
+      createSlider({ ...planets.visibilityBoost, label: "Visibility Boost (Size & Brightness)" }).element,
+      createSubsectionHeading("Per-Planet"),
+      ...rows,
+    ]);
+  }
+
+  private buildPlanetToggleRow(entry: PlanetEntryPanelConfig): HTMLElement {
+    return createSection(entry.label, false, [
+      this.registerLayerCheckbox(`${entry.id}Marker`, createCheckbox("Show Marker", entry.marker.checked, entry.marker.onChange)).element,
+      this.registerLayerCheckbox(`${entry.id}OrbitLine`, createCheckbox("Show Tychonic Path", entry.orbitLine.checked, entry.orbitLine.onChange))
+        .element,
+      this.registerLayerCheckbox(
+        `${entry.id}Ptolemaic`,
+        createCheckbox("Show Ptolemaic Path", entry.ptolemaic.checked, entry.ptolemaic.onChange),
+      ).element,
+      this.registerLayerCheckbox(`${entry.id}TruePath`, createCheckbox("Show True Path", entry.truePath.checked, entry.truePath.onChange))
+        .element,
+      this.registerLayerCheckbox(`${entry.id}SkyPath`, createCheckbox("Show Sky Path", entry.skyPath.checked, entry.skyPath.onChange)).element,
     ]);
   }
 

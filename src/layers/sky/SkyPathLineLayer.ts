@@ -48,12 +48,20 @@ export interface SkyPathLineLayerOptions {
  * Resamples every update() from the CURRENT simulation time, same rationale
  * as OrbitLineLayer: cheap, and keeps the Moon's path honest as its
  * ascending node slowly regresses.
+ *
+ * Rendered as a plain THREE.Line (NOT LineLoop), same reasoning as
+ * OrbitLineLayer's own doc comment: the Sun/Moon's `periodDays` is their
+ * own true period, so the sampled loop already closes almost exactly - but
+ * main.ts's planet instances sample over the SYNODIC period (only an
+ * approximation of the real retrograde loop's true repeat cycle), which
+ * genuinely does NOT close. A LineLoop would draw a long, spurious straight
+ * chord across that real gap instead of leaving it honestly open.
  */
 export class SkyPathLineLayer implements Layer {
   readonly id: string;
   readonly label: string;
   readonly group: LayerGroup;
-  readonly object3D: THREE.LineLoop;
+  readonly object3D: THREE.Line;
 
   private readonly bodyId: BodyId;
   private readonly relativeToId: BodyId;
@@ -86,7 +94,7 @@ export class SkyPathLineLayer implements Layer {
       transparent: true,
       opacity: options.opacity ?? 0.35,
     });
-    this.object3D = new THREE.LineLoop(geometry, material);
+    this.object3D = new THREE.Line(geometry, material);
     this.object3D.name = `SkyPathLineLayer.${options.id}`;
     this.recompute();
   }

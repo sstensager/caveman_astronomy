@@ -8,6 +8,8 @@
 // conversion, which lives with the render/display-scale constants since it's
 // derived from the existing Earth spin rate, not a model concern).
 
+import type { PlanetId } from "./types";
+
 export const DAYS_PER_YEAR = 365.25;
 export const EARTH_ORBIT_PERIOD_DAYS = DAYS_PER_YEAR;
 
@@ -78,3 +80,76 @@ export const MOON_ASCENDING_NODE_DEG_AT_EPOCH = 0;
  *  the true real-world phase for that date. That's an accepted rough edge,
  *  not a bug. */
 export const SIMULATION_EPOCH_UTC_MS = Date.UTC(2024, 0, 3);
+
+/** Real J2000 mean orbital elements for the 5 naked-eye planets, keyed by
+ *  PlanetId. `orbitRadius` is model-space (compressed via `100 * AU^0.6`,
+ *  the same "not to real distance scale" philosophy as EARTH_ORBIT_RADIUS/
+ *  MOON_ORBIT_RADIUS above - the exponent is chosen so Earth's own anchor,
+ *  AU=1, reproduces exactly EARTH_ORBIT_RADIUS=100). Eccentricity,
+ *  argument of periapsis, inclination, and ascending node are real values.
+ *  `meanAnomalyAtEpochDeg` is derived (J2000 mean longitude propagated
+ *  forward to SIMULATION_EPOCH_UTC_MS) rather than 0 - unlike Earth/Moon,
+ *  there's no single epoch that's simultaneously a perihelion passage for
+ *  all 5 planets, so each needs its own real starting phase instead of
+ *  relying on the "epoch IS perihelion" trick above. Nearest-day precision,
+ *  not ephemeris-grade, consistent with this file's own documented
+ *  standard. Ascending node is a fixed constant per planet (unlike the
+ *  Moon's time-varying regression) - real planetary nodal precession
+ *  periods are 10^4-10^6 years, irrelevant at this sim's timescale. */
+export interface PlanetOrbitalElements {
+  orbitRadius: number;
+  eccentricity: number;
+  periodDays: number;
+  argumentOfPeriapsisDeg: number;
+  inclinationDeg: number;
+  ascendingNodeDeg: number;
+  meanAnomalyAtEpochDeg: number;
+}
+
+export const PLANET_ORBITAL_ELEMENTS: Record<PlanetId, PlanetOrbitalElements> = {
+  mercury: {
+    orbitRadius: 56.6,
+    eccentricity: 0.20563,
+    periodDays: 87.969,
+    argumentOfPeriapsisDeg: 29.125,
+    inclinationDeg: 7.00487,
+    ascendingNodeDeg: 48.33167,
+    meanAnomalyAtEpochDeg: 54.4,
+  },
+  venus: {
+    orbitRadius: 82.3,
+    eccentricity: 0.00677,
+    periodDays: 224.701,
+    argumentOfPeriapsisDeg: 54.852,
+    inclinationDeg: 3.39471,
+    ascendingNodeDeg: 76.68069,
+    meanAnomalyAtEpochDeg: 57.1,
+  },
+  mars: {
+    orbitRadius: 128.8,
+    eccentricity: 0.09341,
+    periodDays: 686.98,
+    argumentOfPeriapsisDeg: 286.462,
+    inclinationDeg: 1.85061,
+    ascendingNodeDeg: 49.57854,
+    meanAnomalyAtEpochDeg: 293.8,
+  },
+  jupiter: {
+    orbitRadius: 269.0,
+    eccentricity: 0.04839,
+    periodDays: 4332.589,
+    argumentOfPeriapsisDeg: 274.198,
+    inclinationDeg: 1.3053,
+    ascendingNodeDeg: 100.55615,
+    meanAnomalyAtEpochDeg: 28.1,
+  },
+  saturn: {
+    orbitRadius: 387.0,
+    eccentricity: 0.05415,
+    periodDays: 10759.22,
+    argumentOfPeriapsisDeg: 338.717,
+    inclinationDeg: 2.48446,
+    ascendingNodeDeg: 113.71504,
+    meanAnomalyAtEpochDeg: 251.0,
+  },
+};

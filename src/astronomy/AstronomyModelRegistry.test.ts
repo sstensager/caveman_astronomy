@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { AstronomyModelRegistry } from "./AstronomyModelRegistry";
-import type { AstronomyModel, SimulationTime, UniverseState } from "./types";
+import type { AstronomyModel, BodyId, BodyState, SimulationTime, UniverseState } from "./types";
 import { BodyIds } from "./types";
 
 function stubModel(id: string): AstronomyModel {
@@ -9,14 +9,13 @@ function stubModel(id: string): AstronomyModel {
     name: id,
     getState(time: SimulationTime): UniverseState {
       const identity = { x: 0, y: 0, z: 0, w: 1 };
-      return {
-        time,
-        bodies: {
-          [BodyIds.Sun]: { id: BodyIds.Sun, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 },
-          [BodyIds.Earth]: { id: BodyIds.Earth, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 },
-          [BodyIds.Moon]: { id: BodyIds.Moon, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 },
-        },
-      };
+      const bodies = Object.fromEntries(
+        Object.values(BodyIds).map((bodyId): [BodyId, BodyState] => [
+          bodyId,
+          { id: bodyId, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 },
+        ]),
+      ) as Record<BodyId, BodyState>;
+      return { time, bodies };
     },
   };
 }

@@ -1,4 +1,4 @@
-import { BodyIds, type AstronomyModel, type BodyState, type SimulationTime, type UniverseState } from "../types";
+import { BodyIds, type AstronomyModel, type BodyState, type PlanetId, type SimulationTime, type UniverseState } from "../types";
 import { addVectors, ellipticalOrbitPosition, inclinedEllipticalOrbitPosition } from "../vectorMath";
 import {
   EARTH_ARGUMENT_OF_PERIHELION_DEG,
@@ -13,7 +13,14 @@ import {
   MOON_ORBIT_INCLINATION_DEG,
   MOON_ORBIT_PERIOD_DAYS,
   MOON_ORBIT_RADIUS,
+  PLANET_ORBITAL_ELEMENTS,
 } from "../constants";
+import { planetHeliocentricPosition } from "../planetPositions";
+
+// Placeholder display radius shared by every planet marker - unused this
+// iteration, same rationale as SUN_BODY_RADIUS/EARTH_BODY_RADIUS/
+// MOON_BODY_RADIUS below (schema-only slot, markers are fixed-size dots).
+const PLANET_BODY_RADIUS = 1;
 
 const TWO_PI = Math.PI * 2;
 const DEG_TO_RAD = Math.PI / 180;
@@ -85,12 +92,26 @@ export class ModernHeliocentricModel implements AstronomyModel {
       radius: MOON_BODY_RADIUS,
     };
 
+    const planetBodies = Object.fromEntries(
+      Object.entries(PLANET_ORBITAL_ELEMENTS).map(([id, elements]) => {
+        const body: BodyState = {
+          id: id as PlanetId,
+          parentId: BodyIds.Sun,
+          position: planetHeliocentricPosition(elements, time),
+          orientation: IDENTITY_ORIENTATION,
+          radius: PLANET_BODY_RADIUS,
+        };
+        return [id, body];
+      }),
+    ) as Record<PlanetId, BodyState>;
+
     return {
       time,
       bodies: {
         [BodyIds.Sun]: sun,
         [BodyIds.Earth]: earth,
         [BodyIds.Moon]: moon,
+        ...planetBodies,
       },
     };
   }

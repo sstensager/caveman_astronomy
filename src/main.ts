@@ -21,12 +21,20 @@ import { ConstellationLinesLayer } from "./layers/sky/ConstellationLinesLayer";
 import { ConstellationLabelsLayer } from "./layers/sky/ConstellationLabelsLayer";
 import { OrbitLineLayer } from "./layers/sky/OrbitLineLayer";
 import { SkyPathLineLayer } from "./layers/sky/SkyPathLineLayer";
+import { BodyLabelsLayer } from "./layers/sky/BodyLabelsLayer";
 import { OrbitingBodyMarkerLayer } from "./layers/sky/OrbitingBodyMarkerLayer";
 import { ModernHeliocentricModel } from "./astronomy/models/ModernHeliocentricModel";
 import { GeocentricModel } from "./astronomy/models/GeocentricModel";
 import { AstronomyModelRegistry } from "./astronomy/AstronomyModelRegistry";
 import { BodyIds, type AstronomyModel, type SimulationTime } from "./astronomy/types";
-import { getEarthDiagramPosition, getMoonOffsetFromEarth, getSunOffsetFromEarth } from "./astronomy/solarSystemDiagram";
+import {
+  getBodyOffsetFromEarth,
+  getBodyOffsetFromSun,
+  getEarthDiagramPosition,
+  getMoonOffsetFromEarth,
+  getSunOffsetFromEarth,
+} from "./astronomy/solarSystemDiagram";
+import { ptolemaicCapScaleFactor, synodicPeriodDays } from "./astronomy/planetPositions";
 import { eclipticToWorld } from "./astronomy/frames";
 import { dateToSimulationDay, simulationDayToDate } from "./astronomy/calendar";
 import { STAR_CATALOG } from "./astronomy/starCatalog";
@@ -70,6 +78,9 @@ import {
   MOON_SIZE_MIN_RADII,
   MOON_SIZE_MAX_RADII,
   OBSERVER_COLORS,
+  PLANET_VISIBILITY_BOOST_DEFAULT,
+  PLANET_VISIBILITY_BOOST_MIN,
+  PLANET_VISIBILITY_BOOST_MAX,
   STAR_LIMITING_MAGNITUDE_MAX,
   STAR_LIMITING_MAGNITUDE_MIN,
   STAR_RADIUS_DEFAULT,
@@ -100,7 +111,9 @@ import {
   EARTH_ORBIT_RADIUS,
   MOON_ORBIT_PERIOD_DAYS,
   MOON_ORBIT_RADIUS,
+  PLANET_ORBITAL_ELEMENTS,
 } from "./astronomy/constants";
+import { PLANET_RENDER_CONFIG } from "./config/planets";
 
 const container = document.querySelector<HTMLDivElement>("#app");
 if (!container) throw new Error("#app container not found");
@@ -333,6 +346,7 @@ function setSkyRadius(radius: number): void {
   celestialSphereShell.setRadius(radius);
   sunEclipticPath.setRadius(radius);
   moonSkyPath.setRadius(radius);
+  planetLayers.forEach((p) => p.skyPath.setRadius(radius));
   for (const entry of observerRegistry.all()) {
     entry.zenith.setRadius(radius);
   }
@@ -438,16 +452,557 @@ function applyEarthOrbitPathVisibility(): void {
   layers.show({ earthOrbitLine: earthOrbitPathVisible && activeScene === "heliocentric" });
 }
 
+/** Largest planet-to-Earth-orbit model-space ratio, used to widen Space
+ *  View's max camera distance far enough to always reach Saturn's orbit
+ *  (the outermost) regardless of the current Sun-distance slider value -
+ *  see setSunDistanceRadii and its init-time counterpart below. */
+const FARTHEST_PLANET_ORBIT_RATIO = Math.max(...Object.values(PLANET_ORBITAL_ELEMENTS).map((e) => e.orbitRadius / EARTH_ORBIT_RADIUS));
+
 /** Every layer whose scale tracks the Sun's own distance slider. */
 function setSunDistanceRadii(radii: number): void {
   sunDistanceRadii = radii;
   sunOrbitLine.setRadius(EARTH_RADIUS * radii);
   earthOrbitLine.setRadius(EARTH_RADIUS * radii);
-  cameraManager.setSpaceMaxDistance(Math.max(EARTH_RADIUS * 200, radii * EARTH_RADIUS * 3));
+  planetLayers.forEach((p) => {
+    p.orbitLineHelio.setRadius(EARTH_RADIUS * radii);
+    p.deferentGeo.setRadius(EARTH_RADIUS * radii);
+    p.epicycleGeo.setRadius(EARTH_RADIUS * radii);
+    p.ptolemaicDeferentGeo.setRadius(EARTH_RADIUS * radii * p.ptolemaicScaleFactor);
+    p.ptolemaicEpicycleGeo.setRadius(EARTH_RADIUS * radii * p.ptolemaicScaleFactor);
+    p.truePathGeo.setRadius(EARTH_RADIUS * radii);
+  });
+  cameraManager.setSpaceMaxDistance(Math.max(EARTH_RADIUS * 200, radii * EARTH_RADIUS * 3 * FARTHEST_PLANET_ORBIT_RATIO));
 }
 function setMoonDistanceRadii(radii: number): void {
   moonDistanceRadii = radii;
   moonOrbitLine.setRadius(EARTH_RADIUS * radii);
+}
+
+// --- Planets: Mercury, Venus, Mars, Jupiter, Saturn ------------------------
+// The MARKER uses the same Earth-relative parenting trick as the Sun/Moon
+// markers above (see their own doc comment) - one instance correct in BOTH
+// Scenes with no branching, since a planet's real Earth-relative offset
+// (via getBodyOffsetFromEarth) is exactly its correct apparent wandering
+// path (including retrograde loops) regardless of which model computes it.
+//
+// The ORBIT LINE is one user-facing toggle backed by real geometry that
+// looks different per Scene, because the real geometry IS different per
+// Scene - not an approximation choice. In Heliocentric, the real path is a
+// Sun-relative ellipse (orbitLineHelio - same shape as sunOrbitLine's own
+// construction, since the Sun sits at the world origin there).
+//
+// In Geocentric, a planet's true position is planetHelio - earthHelio. Split
+// at the minus sign into +planetHelio and -earthHelio, and EACH term is
+// itself one body's own real, unmodified orbital ellipse around the Sun -
+// which is exactly a deferent+epicycle decomposition, not a simplification
+// of one (this is the actual historical justification for epicycles: two
+// real elliptical motions around the Sun, re-expressed relative to Earth,
+// algebraically ARE one big ellipse plus one small ellipse riding on it -
+// see deferentGeo's own doc comment for the sign details, which matter: the
+// "-earthHelio" term is Earth's orbit MIRRORED, not Earth's orbit directly,
+// which is why it's built from the model's own Sun-relative-to-Earth vector
+// rather than Earth-relative-to-Sun). For a SUPERIOR planet (Mars/Jupiter/
+// Saturn, orbitRadius > Earth's), the deferent carries +planetHelio (the
+// planet's own real orbit) and the epicycle carries -earthHelio (Earth's
+// orbit, mirrored). For an INFERIOR planet (Mercury/Venus) it flips: the
+// deferent carries -earthHelio and the epicycle carries +planetHelio. This
+// holds EXACTLY (pure vector algebra - the Sun terms cancel identically,
+// no small-eccentricity approximation needed, unlike a naive "sample the
+// compound path directly" approach would require). applyPlanetOrbitLineVisibility
+// shows whichever pair matches the active Scene and hides the other - never
+// more than one path per planet.
+//
+// Markers/orbit lines all reuse the SUN's own live sunDistanceRadii scale
+// factor rather than getting a separate distance slider each (see
+// config/planets.ts's doc comment) - every planet's distance is
+// real-derived from its own orbital elements, not an artistic free
+// parameter the way Sun/Moon's own distance is, so dragging "Sun distance"
+// scales the whole solar system together correctly.
+//
+// Getting that shared factor right requires the marker's getPosition scale
+// AND every orbit line's own (radius*orbitRadiusFraction)/semiMajorAxis
+// scale to divide by the SAME reference constant - EARTH_ORBIT_RADIUS, the
+// same one sunOrbitLine/sunMarker themselves divide by (see their own
+// construction above), NOT each planet's own orbitRadius. A planet's own
+// orbitRadius already fully determines its real orbit SHAPE (it's baked
+// into the model's own position math - see planetPositions.ts) - it isn't
+// also a per-body display-scale knob the way MOON_ORBIT_RADIUS is for the
+// Moon's own independently-slidered orbit line.
+const planetLayers = PLANET_RENDER_CONFIG.map((cfg) => {
+  const elements = PLANET_ORBITAL_ELEMENTS[cfg.id];
+  const isInferior = elements.orbitRadius < EARTH_ORBIT_RADIUS;
+  const marker = new OrbitingBodyMarkerLayer({
+    id: `${cfg.id}Marker`,
+    label: cfg.label,
+    group: "Sky.Geometry",
+    color: cfg.color,
+    markerSize: EARTH_RADIUS * cfg.markerSizeRadii,
+    getPosition: () =>
+      getBodyOffsetFromEarth(getActiveModel().getState(getSimulationTime()), cfg.id, (EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS),
+  });
+  const orbitLineHelio = new OrbitLineLayer({
+    id: `${cfg.id}OrbitLineHelio`,
+    label: `${cfg.label} Orbit (Heliocentric)`,
+    group: "Sky.Geometry",
+    bodyId: cfg.id,
+    relativeToId: BodyIds.Sun,
+    periodDays: elements.periodDays,
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: getActiveModel,
+    getSimulationTime,
+    radius: EARTH_RADIUS * sunDistanceRadii,
+    orbitRadiusFraction: 1,
+    color: cfg.color,
+  });
+  // Deferent: the "big ring around Earth" - the planet's own real orbit for
+  // a superior planet (bodyId=planet, relativeToId=Sun, same shape as
+  // orbitLineHelio), or Earth's own real orbit MIRRORED for an inferior one
+  // (bodyId=Sun, relativeToId=Earth - the "+M(t)"/"-E(t)" split below
+  // explains why it's the SUN's geocentric orbit, not Earth's heliocentric
+  // one). Same OrbitLineLayer machinery as orbitLineHelio, just re-parented
+  // under earthBase.object3D instead of scene root, so it renders centered
+  // on wherever Earth currently is (the world origin, in Geocentric).
+  //
+  // The sign here is NOT arbitrary: true geocentric position is
+  // planetHelio - earthHelio. Split at the minus sign into two terms,
+  // +planetHelio (the planet's own real orbit, unmirrored) and -earthHelio
+  // (Earth's own real orbit, MIRRORED - i.e. rotated 180deg, which is
+  // EXACTLY what GeocentricModel's own Sun position already is via its
+  // mirror-trick construction - see GeocentricModel's doc comment). So the
+  // "-earthHelio" term is always constructed as bodyId=Sun, relativeToId=
+  // Earth (reads the model's own already-correct Sun-relative-to-Earth
+  // vector), NEVER as bodyId=Earth, relativeToId=Sun (which would give the
+  // wrong, unmirrored sign). This holds exactly (not just approximately -
+  // pure vector algebra, no small-eccentricity approximation needed) as
+  // long as carrier position and epicycle shape are assigned consistently
+  // below.
+  const deferentGeo = new OrbitLineLayer({
+    id: `${cfg.id}DeferentGeo`,
+    label: `${cfg.label} Deferent (Geocentric)`,
+    group: "Sky.Geometry",
+    bodyId: isInferior ? BodyIds.Sun : cfg.id,
+    relativeToId: isInferior ? BodyIds.Earth : BodyIds.Sun,
+    periodDays: isInferior ? EARTH_ORBIT_PERIOD_DAYS : elements.periodDays,
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: getActiveModel,
+    getSimulationTime,
+    radius: EARTH_RADIUS * sunDistanceRadii,
+    orbitRadiusFraction: 1,
+    color: cfg.color,
+    opacity: 0.5,
+  });
+  // Epicycle: the small ring riding on the deferent - whichever of the two
+  // terms above ISN'T the deferent. Parented under `carrier` (below), NOT
+  // earthBase directly, so its own center moves along the deferent each
+  // frame instead of sitting fixed at Earth. Dimmer than the deferent (a
+  // lower opacity, not a different color) so the two read as "primary ring"
+  // + "secondary ring riding on it" at a glance, rather than two
+  // equally-weighted unrelated circles - see the spoke line below for the
+  // same goal from a different angle.
+  const epicycleGeo = new OrbitLineLayer({
+    id: `${cfg.id}EpicycleGeo`,
+    label: `${cfg.label} Epicycle (Geocentric)`,
+    group: "Sky.Geometry",
+    bodyId: isInferior ? cfg.id : BodyIds.Sun,
+    relativeToId: isInferior ? BodyIds.Sun : BodyIds.Earth,
+    periodDays: isInferior ? elements.periodDays : EARTH_ORBIT_PERIOD_DAYS,
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: getActiveModel,
+    getSimulationTime,
+    radius: EARTH_RADIUS * sunDistanceRadii,
+    orbitRadiusFraction: 1,
+    color: cfg.color,
+    opacity: 0.25,
+  });
+  // The epicycle's own moving center - the SAME real body the deferent
+  // traces (the planet's own position for a superior planet, Earth's own
+  // position for an inferior one), repositioned every frame in the render
+  // loop below from the live universeState. A plain THREE.Group, not a
+  // registered Layer - it has no independent visibility of its own, it's
+  // purely a moving pivot the epicycle ring rides on.
+  const epicycleCarrier = new THREE.Group();
+  epicycleCarrier.name = `${cfg.id}EpicycleCarrier`;
+  epicycleCarrier.add(epicycleGeo.object3D);
+  // A thin line from Earth to the epicycle's current carrier position -
+  // makes the "this small ring rides HERE, this far out on the deferent"
+  // relationship visually unambiguous, rather than leaving the epicycle
+  // looking like an unrelated floating circle. Both endpoints are in
+  // earthBase.object3D's own local space (Earth at local origin), updated
+  // every frame in the render loop below alongside epicycleCarrier itself.
+  const epicycleSpokeLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0)]),
+    new THREE.LineBasicMaterial({ color: cfg.color, transparent: true, opacity: 0.3 }),
+  );
+  epicycleSpokeLine.name = `${cfg.id}EpicycleSpoke`;
+  const epicycleSpoke: Layer = {
+    id: `${cfg.id}EpicycleSpoke`,
+    label: `${cfg.label} Epicycle Spoke`,
+    group: "Sky.Geometry",
+    object3D: epicycleSpokeLine,
+    setVisible: (visible: boolean) => {
+      epicycleSpokeLine.visible = visible;
+    },
+  };
+  // Ptolemaic: the REAL historical Ptolemaic construction - deliberately
+  // NOT mathematically exact for Mercury/Venus (see PlanetEntryPanelConfig's
+  // doc comment in ControlPanel.ts for the full history). Same deferent+
+  // epicycle SHAPE and DIRECTION as the Tychonic pair above (same bodyId/
+  // relativeToId), but both radii AND the carrier's own distance are scaled
+  // down by ptolemaicScaleFactor so their combined maximum reach exactly
+  // equals the Sun's own average distance - the actual "nested crystalline
+  // spheres don't overlap" cosmological assumption. Scaling deferent and
+  // epicycle by the SAME factor preserves the ratio between them, which is
+  // what determines apparent DIRECTION (max elongation) - so this still
+  // predicts the correct sky position, exactly like the real historical
+  // model did; it just can never place the planet beyond the Sun, which is
+  // exactly why it structurally cannot produce Venus's gibbous phases. For
+  // Mars/Jupiter/Saturn, ptolemaicScaleFactor is exactly 1 (no cap needed) -
+  // real Ptolemaic superior-planet epicycles (epicycle vector always
+  // parallel to the Earth-Sun line) are already mathematically exact, so
+  // this ends up geometrically identical to the Tychonic pair for those
+  // three, by construction - a genuine historical fact, not a shortcut.
+  const ptolemaicScaleFactor = isInferior ? ptolemaicCapScaleFactor(elements.orbitRadius) : 1;
+  const ptolemaicDeferentGeo = new OrbitLineLayer({
+    id: `${cfg.id}PtolemaicDeferentGeo`,
+    label: `${cfg.label} Ptolemaic Deferent`,
+    group: "Sky.Geometry",
+    bodyId: isInferior ? BodyIds.Sun : cfg.id,
+    relativeToId: isInferior ? BodyIds.Earth : BodyIds.Sun,
+    periodDays: isInferior ? EARTH_ORBIT_PERIOD_DAYS : elements.periodDays,
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: getActiveModel,
+    getSimulationTime,
+    radius: EARTH_RADIUS * sunDistanceRadii * ptolemaicScaleFactor,
+    orbitRadiusFraction: 1,
+    color: cfg.color,
+    opacity: 0.5,
+  });
+  const ptolemaicEpicycleGeo = new OrbitLineLayer({
+    id: `${cfg.id}PtolemaicEpicycleGeo`,
+    label: `${cfg.label} Ptolemaic Epicycle`,
+    group: "Sky.Geometry",
+    bodyId: isInferior ? cfg.id : BodyIds.Sun,
+    relativeToId: isInferior ? BodyIds.Sun : BodyIds.Earth,
+    periodDays: isInferior ? elements.periodDays : EARTH_ORBIT_PERIOD_DAYS,
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: getActiveModel,
+    getSimulationTime,
+    radius: EARTH_RADIUS * sunDistanceRadii * ptolemaicScaleFactor,
+    orbitRadiusFraction: 1,
+    color: cfg.color,
+    opacity: 0.25,
+  });
+  // Same "moving pivot the epicycle rides on" role as epicycleCarrier
+  // above, just scaled down to match the Ptolemaic-capped deferent (see
+  // the render loop below).
+  const ptolemaicCarrier = new THREE.Group();
+  ptolemaicCarrier.name = `${cfg.id}PtolemaicCarrier`;
+  ptolemaicCarrier.add(ptolemaicEpicycleGeo.object3D);
+  const ptolemaicSpokeLine = new THREE.Line(
+    new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(0, 0, 0), new THREE.Vector3(0, 0, 0)]),
+    new THREE.LineBasicMaterial({ color: cfg.color, transparent: true, opacity: 0.3 }),
+  );
+  ptolemaicSpokeLine.name = `${cfg.id}PtolemaicSpoke`;
+  const ptolemaicSpoke: Layer = {
+    id: `${cfg.id}PtolemaicSpoke`,
+    label: `${cfg.label} Ptolemaic Spoke`,
+    group: "Sky.Geometry",
+    object3D: ptolemaicSpokeLine,
+    setVisible: (visible: boolean) => {
+      ptolemaicSpokeLine.visible = visible;
+    },
+  };
+  // Direction-only (see class doc comment), so the retrograde loop shape
+  // that matters here is the SYNODIC repeat cycle - the real "how does the
+  // apparent direction against the fixed stars loop back on itself"
+  // period - not the planet's own sidereal orbital period. Using the
+  // sidereal period here was a real bug (fixed once for the now-removed
+  // Geocentric orbit line, then this second, separate consumer needed the
+  // same fix - see synodicPeriodDays' own doc comment): it doesn't
+  // correspond to any real repeat cycle, so the sampled loop wouldn't
+  // close. Model-agnostic - the real retrograde loop against the stars is
+  // the same physical phenomenon regardless of which Scene is active.
+  const skyPath = new SkyPathLineLayer({
+    id: `${cfg.id}SkyPath`,
+    label: `${cfg.label} Sky Path`,
+    group: "Sky.Observation",
+    bodyId: cfg.id,
+    relativeToId: BodyIds.Earth,
+    periodDays: synodicPeriodDays(elements.periodDays),
+    getModel: getActiveModel,
+    getObserver: getActiveObserver,
+    getSimulationTime,
+    radius: skyRadius,
+    color: cfg.color,
+  });
+  // True Path: the REAL, non-decomposed geocentric path - bodyId=planet,
+  // relativeToId=Earth, at REAL distance (unlike Sky Path, which flattens
+  // onto the shared sky radius). This is the actual compound retrograde
+  // loop a planet traces in space relative to Earth - the same curve the
+  // deferent+epicycle pair above is mathematically identical to, just not
+  // decomposed into two legible circles. Also sampled over one synodic
+  // period so it closes into a single clean loop instead of the tangled
+  // many-loop mess sampling a full sidereal period would produce (the
+  // original bug that motivated building the deferent+epicycle
+  // decomposition in the first place). Geocentric-only (paired with
+  // deferent+epicycle, which are also Geocentric-only) - in Heliocentric,
+  // orbitLineHelio already IS the one clean real path, no compound
+  // curve needed there.
+  const truePathGeo = new OrbitLineLayer({
+    id: `${cfg.id}TruePathGeo`,
+    label: `${cfg.label} True Path (Geocentric)`,
+    group: "Sky.Geometry",
+    bodyId: cfg.id,
+    relativeToId: BodyIds.Earth,
+    periodDays: synodicPeriodDays(elements.periodDays),
+    semiMajorAxis: EARTH_ORBIT_RADIUS,
+    getModel: getActiveModel,
+    getSimulationTime,
+    radius: EARTH_RADIUS * sunDistanceRadii,
+    orbitRadiusFraction: 1,
+    color: cfg.color,
+  });
+  // One label per PATH TYPE (not just one per planet - see planetLabels
+  // below), so overlapping same-colored paths (Tychonic/Ptolemaic/True
+  // Path all share this planet's own color) can be told apart at a
+  // glance. Each is anchored at a point genuinely ON its own path, reusing
+  // the exact same live position formula that path's own geometry/carrier
+  // uses - not an approximation:
+  // - Tychonic: the deferent's own carrier position (see the render loop's
+  //   carrierPos - same formula, duplicated here as a closure since
+  //   BodyLabelsLayer needs its own live getPosition callback).
+  // - Ptolemaic: the same carrier position, scaled by ptolemaicScaleFactor
+  //   (matching ptolemaicCarrier's own position).
+  // - True Path: the marker's own live position - True Path's sampled
+  //   curve starts (t=now) exactly there, by construction.
+  // - Sky Path: direction-only, like the path itself (see
+  //   SkyPathLineLayer's own doc comment) - observer world position plus
+  //   direction-to-body times the shared sky radius, NOT Earth-relative
+  //   like the other three, so parented at scene root instead of under
+  //   earthBase.object3D (matching skyPath.object3D's own parenting below).
+  const tychonicLabel = new BodyLabelsLayer({
+    id: `${cfg.id}TychonicLabel`,
+    label: `${cfg.label} Tychonic Label`,
+    group: "Sky.Geometry",
+    entries: [
+      {
+        text: `${cfg.label} Tychonic`,
+        color: `#${cfg.color.toString(16).padStart(6, "0")}`,
+        getPosition: () => {
+          const state = getActiveModel().getState(getSimulationTime());
+          const scale = (EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS;
+          return isInferior ? getSunOffsetFromEarth(state, scale) : getBodyOffsetFromSun(state, cfg.id, scale);
+        },
+      },
+    ],
+  });
+  const ptolemaicLabel = new BodyLabelsLayer({
+    id: `${cfg.id}PtolemaicLabel`,
+    label: `${cfg.label} Ptolemaic Label`,
+    group: "Sky.Geometry",
+    entries: [
+      {
+        text: `${cfg.label} Ptolemaic`,
+        color: `#${cfg.color.toString(16).padStart(6, "0")}`,
+        getPosition: () => {
+          const state = getActiveModel().getState(getSimulationTime());
+          const scale = ((EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS) * ptolemaicScaleFactor;
+          return isInferior ? getSunOffsetFromEarth(state, scale) : getBodyOffsetFromSun(state, cfg.id, scale);
+        },
+      },
+    ],
+  });
+  const truePathLabel = new BodyLabelsLayer({
+    id: `${cfg.id}TruePathLabel`,
+    label: `${cfg.label} True Path Label`,
+    group: "Sky.Geometry",
+    entries: [
+      {
+        text: `${cfg.label} True Path`,
+        color: `#${cfg.color.toString(16).padStart(6, "0")}`,
+        getPosition: () =>
+          getBodyOffsetFromEarth(getActiveModel().getState(getSimulationTime()), cfg.id, (EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS),
+      },
+    ],
+  });
+  const skyPathLabel = new BodyLabelsLayer({
+    id: `${cfg.id}SkyPathLabel`,
+    label: `${cfg.label} Sky Path Label`,
+    group: "Sky.Observation",
+    entries: [
+      {
+        text: `${cfg.label} Sky Path`,
+        color: `#${cfg.color.toString(16).padStart(6, "0")}`,
+        getPosition: () => {
+          const state = getActiveModel().getState(getSimulationTime());
+          const observer = getActiveObserver();
+          const direction = observer.getDirectionTo(cfg.id, state);
+          const worldPos = observer.getFrame().worldPosition;
+          return {
+            x: worldPos.x + direction.x * skyRadius,
+            y: worldPos.y + direction.y * skyRadius,
+            z: worldPos.z + direction.z * skyRadius,
+          };
+        },
+      },
+    ],
+  });
+  // orbitLineHelio is Sun-relative, meaningful only when the Sun sits at
+  // the world origin (Heliocentric) - root-parented like earthOrbitLine.
+  // deferentGeo/epicycleCarrier/ptolemaicDeferentGeo/ptolemaicCarrier/
+  // truePathGeo/the three Earth-relative labels are all Earth-relative,
+  // meaningful only when Earth sits at the world origin (Geocentric) -
+  // parented under earthBase.object3D like the marker, same "correct
+  // position in whichever Scene has that body fixed" trick. skyPathLabel
+  // is root-parented like skyPath itself (see skyPath's own scene.add call
+  // below).
+  earthBase.object3D.add(
+    marker.object3D,
+    deferentGeo.object3D,
+    epicycleCarrier,
+    epicycleSpokeLine,
+    ptolemaicDeferentGeo.object3D,
+    ptolemaicCarrier,
+    ptolemaicSpokeLine,
+    truePathGeo.object3D,
+    tychonicLabel.object3D,
+    ptolemaicLabel.object3D,
+    truePathLabel.object3D,
+  );
+  scene.add(orbitLineHelio.object3D, skyPath.object3D, skyPathLabel.object3D);
+  return {
+    cfg,
+    elements,
+    isInferior,
+    marker,
+    orbitLineHelio,
+    deferentGeo,
+    epicycleGeo,
+    epicycleCarrier,
+    epicycleSpoke,
+    epicycleSpokeLine,
+    ptolemaicScaleFactor,
+    ptolemaicDeferentGeo,
+    ptolemaicEpicycleGeo,
+    ptolemaicCarrier,
+    ptolemaicSpoke,
+    ptolemaicSpokeLine,
+    truePathGeo,
+    skyPath,
+    tychonicLabel,
+    ptolemaicLabel,
+    truePathLabel,
+    skyPathLabel,
+    orbitLineVisible: false,
+    ptolemaicVisible: false,
+    truePathVisible: false,
+    skyPathVisible: false,
+  };
+});
+
+// One label per planet, tracking the SAME getBodyOffsetFromEarth position
+// each marker itself uses (so it stays glued to its marker in both
+// Scenes), offset slightly above so it doesn't sit directly on top of the
+// dot. Since every path shares its planet's own color already, this
+// doubles as identifying which path belongs to which planet, not just the
+// marker. Parented under earthBase.object3D like the markers themselves,
+// same "correct position in either Scene" reasoning.
+const planetLabels = new BodyLabelsLayer({
+  id: "planetLabels",
+  label: "Planet Labels",
+  group: "Sky.Geometry",
+  entries: planetLayers.map((p) => ({
+    text: p.cfg.label,
+    color: `#${p.cfg.color.toString(16).padStart(6, "0")}`,
+    getPosition: () =>
+      getBodyOffsetFromEarth(getActiveModel().getState(getSimulationTime()), p.cfg.id, (EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS),
+    offset: { x: 0, y: EARTH_RADIUS * p.cfg.markerSizeRadii * 1.8, z: 0 },
+  })),
+});
+earthBase.object3D.add(planetLabels.object3D);
+
+/** One "Orbit Line" checkbox per planet, backed by real layers that differ
+ *  per Scene - shows whichever set is geometrically correct for the active
+ *  Scene and hides the rest, so the user only ever sees (and only ever
+ *  needs to think about) one path per planet, never more than one at once
+ *  (see planetLayers' own doc comment). Re-applied whenever a per-planet
+ *  orbit-line checkbox changes OR the Scene switches. */
+function applyPlanetOrbitLineVisibility(): void {
+  layers.show(
+    Object.fromEntries(
+      planetLayers.flatMap((p) => [
+        [p.orbitLineHelio.id, p.orbitLineVisible && activeScene === "heliocentric"],
+        [p.deferentGeo.id, p.orbitLineVisible && activeScene === "geocentric"],
+        [p.epicycleGeo.id, p.orbitLineVisible && activeScene === "geocentric"],
+        [p.epicycleSpoke.id, p.orbitLineVisible && activeScene === "geocentric"],
+      ]),
+    ),
+  );
+  applyPathLabelsVisibility();
+}
+
+/** "True Path" (the real, non-decomposed compound geocentric curve - see
+ *  planetLayers' own doc comment) is Geocentric-only, same reasoning as
+ *  deferent+epicycle: only meaningful when Earth sits at the world origin.
+ *  Re-applied whenever a per-planet True Path checkbox changes OR the
+ *  Scene switches. */
+function applyPlanetTruePathVisibility(): void {
+  layers.show(Object.fromEntries(planetLayers.map((p) => [p.truePathGeo.id, p.truePathVisible && activeScene === "geocentric"])));
+  applyPathLabelsVisibility();
+}
+
+/** The Ptolemaic deferent+epicycle+spoke (see planetLayers' own doc
+ *  comment) is Geocentric-only, and unlike the Tychonic pair has NO
+ *  Heliocentric equivalent at all (there's nothing to show there - it's
+ *  specifically a geocentric cosmological model). Re-applied whenever a
+ *  per-planet Ptolemaic checkbox changes OR the Scene switches. */
+function applyPlanetPtolemaicVisibility(): void {
+  layers.show(
+    Object.fromEntries(
+      planetLayers.flatMap((p) => [
+        [p.ptolemaicDeferentGeo.id, p.ptolemaicVisible && activeScene === "geocentric"],
+        [p.ptolemaicEpicycleGeo.id, p.ptolemaicVisible && activeScene === "geocentric"],
+        [p.ptolemaicSpoke.id, p.ptolemaicVisible && activeScene === "geocentric"],
+      ]),
+    ),
+  );
+  applyPathLabelsVisibility();
+}
+
+/** Master "Show Path Labels" state - independent of any single path's own
+ *  visibility (see the per-path onChange handlers in panelConfig, all of
+ *  which call this after updating their own p.*Visible flag). A path's
+ *  label only ever shows when BOTH this is on AND that specific path is
+ *  currently visible - never a label floating with no corresponding line,
+ *  and never silently hidden just because this master switch happens to be
+ *  off while the user is toggling individual paths. Re-applied whenever
+ *  this master flag changes, any per-path visibility changes, OR the Scene
+ *  switches (Ptolemaic/True Path labels are Geocentric-only, matching
+ *  their own lines). */
+let pathLabelsVisible = false;
+function applyPathLabelsVisibility(): void {
+  layers.show(
+    Object.fromEntries(
+      planetLayers.flatMap((p) => [
+        [p.tychonicLabel.id, pathLabelsVisible && p.orbitLineVisible],
+        [p.ptolemaicLabel.id, pathLabelsVisible && p.ptolemaicVisible && activeScene === "geocentric"],
+        [p.truePathLabel.id, pathLabelsVisible && p.truePathVisible && activeScene === "geocentric"],
+        [p.skyPathLabel.id, pathLabelsVisible && p.skyPathVisible],
+      ]),
+    ),
+  );
+}
+
+/** One combined "easier to spot" knob for all 5 planets at once - see the
+ *  Planets section's "Visibility Boost" slider and PLANET_VISIBILITY_BOOST_*
+ *  in config/constants.ts. Scales each marker's own authored size AND its
+ *  color brightness together, since planets are small, flat-colored, and
+ *  dim against the star field by default. */
+function setPlanetVisibilityBoost(multiplier: number): void {
+  for (const p of planetLayers) {
+    p.marker.setMarkerSize(EARTH_RADIUS * p.cfg.markerSizeRadii * multiplier);
+    p.marker.setColorBrightness(multiplier);
+  }
 }
 
 // Synthetic Layer (no object3D of its own - see Layer.object3D being
@@ -496,6 +1051,23 @@ layers.register(sunOrbitLine);
 layers.register(moonOrbitLine);
 layers.register(orbitLines);
 layers.register(earthOrbitLine);
+planetLayers.forEach((p) => {
+  layers.register(p.marker);
+  layers.register(p.orbitLineHelio);
+  layers.register(p.deferentGeo);
+  layers.register(p.epicycleGeo);
+  layers.register(p.epicycleSpoke);
+  layers.register(p.ptolemaicDeferentGeo);
+  layers.register(p.ptolemaicEpicycleGeo);
+  layers.register(p.ptolemaicSpoke);
+  layers.register(p.truePathGeo);
+  layers.register(p.skyPath);
+  layers.register(p.tychonicLabel);
+  layers.register(p.ptolemaicLabel);
+  layers.register(p.truePathLabel);
+  layers.register(p.skyPathLabel);
+});
+layers.register(planetLabels);
 layers.register(observerMarkersLayer);
 layers.register(observerFarSideIndicatorLayer);
 layers.register(targetReticles);
@@ -539,13 +1111,30 @@ const defaultLayerVisibility: Record<string, boolean> = {
   observerMarkers: true,
   observerFarSideIndicator: true,
   targetReticles: true,
+  planetLabels: false,
+  ...Object.fromEntries(planetLayers.flatMap((p) => [
+    [p.marker.id, true],
+    [p.orbitLineHelio.id, false],
+    [p.deferentGeo.id, false],
+    [p.epicycleGeo.id, false],
+    [p.epicycleSpoke.id, false],
+    [p.ptolemaicDeferentGeo.id, false],
+    [p.ptolemaicEpicycleGeo.id, false],
+    [p.ptolemaicSpoke.id, false],
+    [p.truePathGeo.id, false],
+    [p.skyPath.id, false],
+    [p.tychonicLabel.id, false],
+    [p.ptolemaicLabel.id, false],
+    [p.truePathLabel.id, false],
+    [p.skyPathLabel.id, false],
+  ])),
 };
 layers.show(defaultLayerVisibility);
 
 // --- Cameras --------------------------------------------------------------
 
 const cameraManager = new CameraManager(() => observerRegistry.getActive().station.object3D, renderer.domElement);
-cameraManager.setSpaceMaxDistance(Math.max(EARTH_RADIUS * 200, sunDistanceRadii * EARTH_RADIUS * 3));
+cameraManager.setSpaceMaxDistance(Math.max(EARTH_RADIUS * 200, sunDistanceRadii * EARTH_RADIUS * 3 * FARTHEST_PLANET_ORBIT_RATIO));
 
 const getCameraPosition = () => cameraManager.getActiveCamera().position;
 defaultObserverEntry.marker.setCameraPositionGetter(getCameraPosition);
@@ -593,6 +1182,7 @@ const targetableBodies: TargetableBody[] = [
   { id: "sun", label: "Sun", object3D: sunMarker.object3D },
   { id: "moon", label: "Moon", object3D: moonMarker.object3D },
   { id: "earth", label: "Earth", object3D: earthBase.mesh },
+  ...planetLayers.map((p) => ({ id: p.cfg.id, label: p.cfg.label, object3D: p.marker.object3D })),
 ];
 
 function bodyPositionGetter(body: TargetableBody | undefined): (() => THREE.Vector3) | undefined {
@@ -663,6 +1253,9 @@ function switchScene(id: SceneId): void {
   activeScene = id;
   controlPanel.setActiveScene(id);
   applyEarthOrbitPathVisibility();
+  applyPlanetOrbitLineVisibility();
+  applyPlanetPtolemaicVisibility();
+  applyPlanetTruePathVisibility();
 }
 
 /** Snaps Earth's CURRENT rotation (not just the date) so the sun sits
@@ -849,6 +1442,118 @@ const panelConfig: ControlPanelConfig = {
       onChange: (v: number) => moonMarker.setDarkSideBrightness(v),
     },
   },
+  planets: {
+    allMarkersVisible: {
+      checked: true,
+      onChange: (v: boolean) => {
+        const visibility = Object.fromEntries(planetLayers.map((p) => [p.marker.id, v]));
+        layers.show(visibility);
+        controlPanel.syncLayerToggles(visibility);
+      },
+    },
+    allOrbitLinesVisible: {
+      checked: false,
+      onChange: (v: boolean) => {
+        for (const p of planetLayers) p.orbitLineVisible = v;
+        applyPlanetOrbitLineVisibility();
+        // The checkbox is registered under `${id}OrbitLine` (see
+        // ControlPanel's buildPlanetToggleRow) - a UI-only id, distinct
+        // from the real layer ids (OrbitLineHelio/DeferentGeo/EpicycleGeo)
+        // it controls, since only some of those are ever actually visible
+        // at once.
+        controlPanel.syncLayerToggles(Object.fromEntries(planetLayers.map((p) => [`${p.cfg.id}OrbitLine`, v])));
+      },
+    },
+    allPtolemaicVisible: {
+      checked: false,
+      onChange: (v: boolean) => {
+        for (const p of planetLayers) p.ptolemaicVisible = v;
+        applyPlanetPtolemaicVisibility();
+        // Same UI-only-id reasoning as allOrbitLinesVisible above - the
+        // checkbox is registered under `${id}Ptolemaic`, distinct from the
+        // real PtolemaicDeferentGeo/PtolemaicEpicycleGeo layer ids.
+        controlPanel.syncLayerToggles(Object.fromEntries(planetLayers.map((p) => [`${p.cfg.id}Ptolemaic`, v])));
+      },
+    },
+    allTruePathsVisible: {
+      checked: false,
+      onChange: (v: boolean) => {
+        for (const p of planetLayers) p.truePathVisible = v;
+        applyPlanetTruePathVisibility();
+        // Same UI-only-id reasoning as allOrbitLinesVisible above - the
+        // checkbox is registered under `${id}TruePath`, distinct from the
+        // real TruePathGeo layer id.
+        controlPanel.syncLayerToggles(Object.fromEntries(planetLayers.map((p) => [`${p.cfg.id}TruePath`, v])));
+      },
+    },
+    allSkyPathsVisible: {
+      checked: false,
+      onChange: (v: boolean) => {
+        // Sky Path has no Scene gating (see its own construction above -
+        // it's model-agnostic, correct in both Scenes) - unlike the two
+        // master toggles above, the checkbox id and the real layer id are
+        // the same, so a single fan-out covers both effects.
+        for (const p of planetLayers) p.skyPathVisible = v;
+        const visibility = Object.fromEntries(planetLayers.map((p) => [p.skyPath.id, v]));
+        layers.show(visibility);
+        controlPanel.syncLayerToggles(visibility);
+        applyPathLabelsVisibility();
+      },
+    },
+    labelsVisible: {
+      checked: false,
+      onChange: (v: boolean) => layers.show({ planetLabels: v }),
+    },
+    pathLabelsVisible: {
+      checked: false,
+      onChange: (v: boolean) => {
+        pathLabelsVisible = v;
+        applyPathLabelsVisibility();
+      },
+    },
+    visibilityBoost: {
+      value: PLANET_VISIBILITY_BOOST_DEFAULT,
+      min: PLANET_VISIBILITY_BOOST_MIN,
+      max: PLANET_VISIBILITY_BOOST_MAX,
+      step: 0.1,
+      format: (v: number) => `${v.toFixed(1)}x`,
+      onChange: setPlanetVisibilityBoost,
+    },
+    entries: planetLayers.map((p) => ({
+      id: p.cfg.id,
+      label: p.cfg.label,
+      marker: { checked: defaultLayerVisibility[p.marker.id], onChange: (v: boolean) => layers.show({ [p.marker.id]: v }) },
+      orbitLine: {
+        checked: false,
+        onChange: (v: boolean) => {
+          p.orbitLineVisible = v;
+          applyPlanetOrbitLineVisibility();
+        },
+      },
+      ptolemaic: {
+        checked: false,
+        onChange: (v: boolean) => {
+          p.ptolemaicVisible = v;
+          applyPlanetPtolemaicVisibility();
+        },
+      },
+      truePath: {
+        checked: false,
+        onChange: (v: boolean) => {
+          p.truePathVisible = v;
+          applyPlanetTruePathVisibility();
+        },
+      },
+      skyPath: {
+        checked: false,
+        onChange: (v: boolean) => {
+          p.skyPathVisible = v;
+          layers.show({ [p.skyPath.id]: v });
+          applyPathLabelsVisibility();
+        },
+      },
+    })),
+  },
   observer: {
     entries: observerRegistry.all().map((entry) => ({ id: entry.id, label: entry.label })),
     activeId: observerRegistry.getActiveId(),
@@ -1013,6 +1718,41 @@ renderer.setAnimationLoop(() => {
       ? getEarthDiagramPosition(universeState, (EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS)
       : { x: 0, y: 0, z: 0 },
   );
+
+  // Each planet's epicycle rides on a carrier positioned at wherever its
+  // OWN deferent currently sits (see planetLayers' own deferentGeo doc
+  // comment for the sign reasoning) - the planet's own real Sun-relative
+  // position (+planetHelio) for a superior planet, or the Sun's own real
+  // Earth-relative position (-earthHelio, isInferior) for an inferior one.
+  // Only visually matters in Geocentric, but cheap enough to keep live
+  // unconditionally (same rationale as groundScatter.regenerateAround
+  // below).
+  for (const p of planetLayers) {
+    const scale = (EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS;
+    const carrierPos = p.isInferior ? getSunOffsetFromEarth(universeState, scale) : getBodyOffsetFromSun(universeState, p.cfg.id, scale);
+    p.epicycleCarrier.position.set(carrierPos.x, carrierPos.y, carrierPos.z);
+    // Spoke line's far endpoint follows the same carrier position - its
+    // near endpoint stays at (0,0,0) (Earth, in earthBase.object3D's own
+    // local space) always.
+    const spokePositions = p.epicycleSpokeLine.geometry.attributes.position;
+    spokePositions.setXYZ(1, carrierPos.x, carrierPos.y, carrierPos.z);
+    spokePositions.needsUpdate = true;
+
+    // Ptolemaic carrier: the SAME direction as the Tychonic carrier above
+    // (same real body, same real angular position - that's what preserves
+    // correct apparent DIRECTION), just scaled down by ptolemaicScaleFactor
+    // to match the capped deferent/epicycle radii (see planetLayers' own
+    // doc comment).
+    const ptolemaicCarrierPos = {
+      x: carrierPos.x * p.ptolemaicScaleFactor,
+      y: carrierPos.y * p.ptolemaicScaleFactor,
+      z: carrierPos.z * p.ptolemaicScaleFactor,
+    };
+    p.ptolemaicCarrier.position.set(ptolemaicCarrierPos.x, ptolemaicCarrierPos.y, ptolemaicCarrierPos.z);
+    const ptolemaicSpokePositions = p.ptolemaicSpokeLine.geometry.attributes.position;
+    ptolemaicSpokePositions.setXYZ(1, ptolemaicCarrierPos.x, ptolemaicCarrierPos.y, ptolemaicCarrierPos.z);
+    ptolemaicSpokePositions.needsUpdate = true;
+  }
 
   // Real day/night terminator: the key light always comes from the active
   // Scene's actual current Sun direction. keyLight is parented under

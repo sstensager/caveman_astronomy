@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { GeocentricModel } from "./GeocentricModel";
-import { BodyIds } from "../types";
+import { BodyIds, type BodyId } from "../types";
 import {
   EARTH_ORBIT_ECCENTRICITY,
   EARTH_ORBIT_PERIOD_DAYS,
@@ -9,6 +9,7 @@ import {
   MOON_ORBIT_ECCENTRICITY,
   MOON_ORBIT_PERIOD_DAYS,
   MOON_ORBIT_RADIUS,
+  PLANET_ORBITAL_ELEMENTS,
 } from "../constants";
 import { length, subVectors } from "../vectorMath";
 
@@ -103,5 +104,74 @@ describe("GeocentricModel", () => {
     expect(state.bodies[BodyIds.Sun].parentId).toBe(BodyIds.Earth);
     expect(state.bodies[BodyIds.Moon].parentId).toBe(BodyIds.Earth);
     expect(state.bodies[BodyIds.Earth].parentId).toBeUndefined();
+  });
+
+  describe.each(Object.entries(PLANET_ORBITAL_ELEMENTS))("planet: %s", (id, elements) => {
+    const bodyId = id as BodyId;
+
+    it("sets parentId to Earth", () => {
+      expect(model.getState(0).bodies[bodyId].parentId).toBe(BodyIds.Earth);
+    });
+
+    // The geocentric position is real vector subtraction (planet's real
+    // heliocentric position minus Earth's), not a mirror-trick shortcut -
+    // see GeocentricModel's own doc comment. There's no simple closed-form
+    // periapsis/apoapsis for a GEOCENTRIC planet distance (unlike the Sun's
+    // own perigee/apogee above), but by the triangle inequality the
+    // geocentric distance |planetHelio - earthHelio| can never exceed the
+    // sum of the two bodies' own heliocentric distances, nor fall below
+    // their difference - a loose but real sanity bound on the subtraction.
+    it("keeps its geocentric distance within the triangle-inequality bound implied by its own and Earth's heliocentric orbits", () => {
+      const planetPeriapsis = elements.orbitRadius * (1 - elements.eccentricity);
+      const planetApoapsis = elements.orbitRadius * (1 + elements.eccentricity);
+      const earthApoapsis = EARTH_ORBIT_RADIUS * (1 + EARTH_ORBIT_ECCENTRICITY);
+      const lowerBound = Math.max(0, planetPeriapsis - earthApoapsis);
+      const upperBound = planetApoapsis + earthApoapsis;
+      for (const t of [0, elements.periodDays * 0.2, elements.periodDays * 0.7, elements.periodDays * 1.5]) {
+        const state = model.getState(t);
+        const distance = length(subVectors(state.bodies[bodyId].position, state.bodies[BodyIds.Earth].position));
+        expect(distance).toBeGreaterThanOrEqual(lowerBound - 1e-6);
+        expect(distance).toBeLessThanOrEqual(upperBound + 1e-6);
+      }
+    });
+  });
+
+  // The pedagogical payoff of computing planets via real vector subtraction
+  // rather than a shortcut: it naturally reproduces retrograde apparent
+  // motion for the outer planets. Numerically verifies the geometry is
+  // actually capable of a retrograde dip, without rendering/visually
+  // inspecting anything (see NOTES/plan for why this matters - it's the
+  // "technically equivalent but pedagogically pointless" regression this
+  // guards against).
+  it("Mars's geocentric apparent longitude shows a retrograde dip over one Earth-Mars synodic period", () => {
+    // Synodic period (~779.9 days) = 1 / (1/EARTH_ORBIT_PERIOD_DAYS - 1/marsPeriodDays);
+    // 800 days comfortably exceeds it and also exceeds Mars's own sidereal
+    // period (~687 days), guaranteeing at least one full retrograde loop.
+    const spanDays = 800;
+    const sampleCount = 400;
+    const longitudes: number[] = [];
+    for (let i = 0; i <= sampleCount; i++) {
+      const t = (spanDays * i) / sampleCount;
+      const state = model.getState(t);
+      const rel = subVectors(state.bodies[BodyIds.Mars].position, state.bodies[BodyIds.Earth].position);
+      longitudes.push(Math.atan2(rel.z, rel.x));
+    }
+    // Unwrap across the +-PI branch cut so consecutive samples form a
+    // continuous (not sawtooth) angle sequence.
+    const unwrapped = [longitudes[0]];
+    for (let i = 1; i < longitudes.length; i++) {
+      let delta = longitudes[i] - longitudes[i - 1];
+      while (delta > Math.PI) delta -= 2 * Math.PI;
+      while (delta < -Math.PI) delta += 2 * Math.PI;
+      unwrapped.push(unwrapped[i - 1] + delta);
+    }
+    // Net motion over the full span is still prograde (the usual case -
+    // Mars completes more than one apparent loop around Earth's sky in this
+    // span).
+    expect(unwrapped[unwrapped.length - 1]).toBeGreaterThan(unwrapped[0]);
+    // But somewhere in the middle, apparent motion runs backward - the
+    // retrograde loop itself.
+    const hasRetrogradeDip = unwrapped.some((v, i) => i > 0 && v < unwrapped[i - 1]);
+    expect(hasRetrogradeDip).toBe(true);
   });
 });

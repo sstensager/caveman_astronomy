@@ -11,8 +11,18 @@ export const BodyIds = {
   Sun: "sun",
   Earth: "earth",
   Moon: "moon",
+  Mercury: "mercury",
+  Venus: "venus",
+  Mars: "mars",
+  Jupiter: "jupiter",
+  Saturn: "saturn",
 } as const;
 export type BodyId = (typeof BodyIds)[keyof typeof BodyIds];
+
+/** The 5 naked-eye planets - a subset of BodyId excluding Sun/Earth/Moon,
+ *  used wherever code needs to iterate planets specifically (orbital
+ *  elements tables, render config) without touching the other 3 bodies. */
+export type PlanetId = Exclude<BodyId, typeof BodyIds.Sun | typeof BodyIds.Earth | typeof BodyIds.Moon>;
 
 export interface Vector3Like {
   x: number;

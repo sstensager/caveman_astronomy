@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import { OrbitLineLayer } from "./OrbitLineLayer";
 import { GeocentricModel } from "../../astronomy/models/GeocentricModel";
 import { ModernHeliocentricModel } from "../../astronomy/models/ModernHeliocentricModel";
-import { BodyIds, type AstronomyModel, type SimulationTime, type UniverseState } from "../../astronomy/types";
+import { BodyIds, type AstronomyModel, type BodyId, type BodyState, type SimulationTime, type UniverseState } from "../../astronomy/types";
 import { eclipticToWorld } from "../../astronomy/frames";
 
 /** Expected render-space point for a given ecliptic-frame relative vector -
@@ -16,6 +16,8 @@ function expectedWorldPoint(x: number, y: number, z: number, scale: number): THR
   return new THREE.Vector3(world.x * scale, world.y * scale, world.z * scale);
 }
 
+const PLANET_IDS = [BodyIds.Mercury, BodyIds.Venus, BodyIds.Mars, BodyIds.Jupiter, BodyIds.Saturn] as const;
+
 function stubModel(bodyPosition: (time: SimulationTime) => THREE.Vector3): AstronomyModel {
   return {
     id: "stub",
@@ -26,6 +28,9 @@ function stubModel(bodyPosition: (time: SimulationTime) => THREE.Vector3): Astro
       return {
         time,
         bodies: {
+          ...(Object.fromEntries(
+            PLANET_IDS.map((id) => [id, { id, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 }]),
+          ) as Record<BodyId, BodyState>),
           [BodyIds.Sun]: { id: BodyIds.Sun, position: { x: p.x, y: p.y, z: p.z }, orientation: identity, radius: 1 },
           [BodyIds.Earth]: { id: BodyIds.Earth, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 },
           [BodyIds.Moon]: { id: BodyIds.Moon, position: { x: 0, y: 0, z: 0 }, orientation: identity, radius: 1 },

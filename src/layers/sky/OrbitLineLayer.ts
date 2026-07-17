@@ -60,12 +60,24 @@ export interface OrbitLineLayerOptions {
  * time - cheap (segments x getState() calls, all pure trig) and keeps the
  * Moon's line honest as its ascending node slowly regresses over sim time,
  * with no separate cache-invalidation logic required.
+ *
+ * Rendered as a plain THREE.Line (NOT LineLoop) deliberately: for a body
+ * whose `periodDays` is its own true, exact period (Sun/Moon/Earth, the
+ * Tychonic deferent+epicycle pair), the sampled curve already closes on
+ * itself almost exactly, so a Line vs. a LineLoop looks identical either
+ * way. But main.ts's "True Path" instances sample over the SYNODIC period
+ * (only an approximation of the real compound curve's true repeat cycle -
+ * see synodicPeriodDays' own doc comment) and genuinely do NOT close - a
+ * LineLoop would draw a long, spurious straight chord connecting the
+ * non-matching start/end points, which is exactly what it did before this
+ * was caught (see git history) and is wrong regardless of which body it
+ * happens to be visually obvious for.
  */
 export class OrbitLineLayer implements Layer {
   readonly id: string;
   readonly label: string;
   readonly group: LayerGroup;
-  readonly object3D: THREE.LineLoop;
+  readonly object3D: THREE.Line;
 
   private readonly bodyId: BodyId;
   private readonly relativeToId: BodyId;
@@ -100,7 +112,7 @@ export class OrbitLineLayer implements Layer {
       transparent: true,
       opacity: options.opacity ?? 0.35,
     });
-    this.object3D = new THREE.LineLoop(geometry, material);
+    this.object3D = new THREE.Line(geometry, material);
     this.object3D.name = `OrbitLineLayer.${options.id}`;
     this.recompute();
   }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ModernHeliocentricModel } from "./ModernHeliocentricModel";
-import { BodyIds } from "../types";
+import { BodyIds, type BodyId } from "../types";
 import {
   EARTH_ORBIT_ECCENTRICITY,
   EARTH_ORBIT_PERIOD_DAYS,
@@ -9,6 +9,7 @@ import {
   MOON_ORBIT_ECCENTRICITY,
   MOON_ORBIT_PERIOD_DAYS,
   MOON_ORBIT_RADIUS,
+  PLANET_ORBITAL_ELEMENTS,
 } from "../constants";
 import { length, subVectors } from "../vectorMath";
 
@@ -120,5 +121,31 @@ describe("ModernHeliocentricModel", () => {
     expect(state.bodies[BodyIds.Earth].parentId).toBe(BodyIds.Sun);
     expect(state.bodies[BodyIds.Moon].parentId).toBe(BodyIds.Earth);
     expect(state.bodies[BodyIds.Sun].parentId).toBeUndefined();
+  });
+
+  describe.each(Object.entries(PLANET_ORBITAL_ELEMENTS))("planet: %s", (id, elements) => {
+    const bodyId = id as BodyId;
+
+    it("keeps its distance from the Sun within its elliptical orbit's periapsis-apoapsis range", () => {
+      const periapsis = elements.orbitRadius * (1 - elements.eccentricity);
+      const apoapsis = elements.orbitRadius * (1 + elements.eccentricity);
+      for (const t of [0, elements.periodDays * 0.25, elements.periodDays * 0.6, elements.periodDays * 1.3]) {
+        const distance = length(model.getState(t).bodies[bodyId].position);
+        expect(distance).toBeGreaterThanOrEqual(periapsis - 1e-6);
+        expect(distance).toBeLessThanOrEqual(apoapsis + 1e-6);
+      }
+    });
+
+    it("returns to its starting position after one full orbital period", () => {
+      const start = model.getState(0).bodies[bodyId].position;
+      const afterOnePeriod = model.getState(elements.periodDays).bodies[bodyId].position;
+      expect(afterOnePeriod.x).toBeCloseTo(start.x, 4);
+      expect(afterOnePeriod.y).toBeCloseTo(start.y, 4);
+      expect(afterOnePeriod.z).toBeCloseTo(start.z, 4);
+    });
+
+    it("sets parentId to Sun", () => {
+      expect(model.getState(0).bodies[bodyId].parentId).toBe(BodyIds.Sun);
+    });
   });
 });

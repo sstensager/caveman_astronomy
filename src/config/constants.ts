@@ -114,6 +114,11 @@ export const COLORS = {
   star: 0xffffff,
   sun: 0xffcc55,
   moon: 0xd8dee6,
+  mercury: 0x9c9c9c,
+  venus: 0xe8d9a0,
+  mars: 0xc1440e,
+  jupiter: 0xd2a679,
+  saturn: 0xe3c16f,
   // Deliberately distinct from each other (and from sun/moon/earth's own
   // colors above) so the two reticle kinds read as different things at a
   // glance - see TargetReticleLayer.
@@ -198,6 +203,17 @@ export const MOON_MARKER_SIZE_DEFAULT = EARTH_RADIUS * MOON_SIZE_DEFAULT_RADII;
 export const MOON_DARK_SIDE_BRIGHTNESS_DEFAULT = 0.006;
 export const MOON_DARK_SIDE_BRIGHTNESS_MIN = 0;
 export const MOON_DARK_SIDE_BRIGHTNESS_MAX = 0.02;
+
+// --- Planets: visibility boost ---------------------------------------------
+// A single slider scaling BOTH marker size and color brightness together
+// for all 5 planets at once (see main.ts's setPlanetVisibilityBoost) -
+// planets are small and dim against the star field by default, so this is a
+// "make them easy to spot" knob, not a true-scale control the way Sun/Moon's
+// own size sliders are. 1x reproduces each planet's own authored
+// markerSizeRadii/color exactly; higher values scale both up together.
+export const PLANET_VISIBILITY_BOOST_DEFAULT = 1;
+export const PLANET_VISIBILITY_BOOST_MIN = 1;
+export const PLANET_VISIBILITY_BOOST_MAX = 4;
 
 export const TEXTURES = {
   continents: "/textures/earth1.png",
