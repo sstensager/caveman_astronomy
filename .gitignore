@@ -12,6 +12,10 @@ dist
 dist-ssr
 *.local
 
+# Private episode/script working notes - not part of the app
+/What if Earth didn't spin?.md
+/public/videos.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

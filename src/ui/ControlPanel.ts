@@ -1,7 +1,9 @@
 import { CameraMode } from "../cameras/CameraMode";
 import { CameraUpMode } from "../cameras/CameraUpMode";
+import { SunMode } from "../layers/sky/SunMode";
 import type { HemisphereMode } from "../utils/hemisphereFade";
 import type { StarRecord } from "../astronomy/starCatalog";
+import type { VideoDef } from "../scenes/VideoLibrary";
 import {
   createButton,
   createButtonGroup,
@@ -11,6 +13,7 @@ import {
   createSection,
   createSlider,
   createSubsectionHeading,
+  createTextarea,
   type CheckboxControl,
 } from "./controls";
 
@@ -72,10 +75,28 @@ export interface ScenePanelConfig {
   onSwitchActive: (id: string) => void;
 }
 
-export interface ScenePresetDef {
-  id: string;
-  label: string;
-  onApply: () => void;
+/** The primary way scenes get loaded now: a video/shot browser sourced from
+ *  public/videos.json (see VideoLibrary.ts) - Claude edits that file
+ *  directly, the user refreshes the page and clicks a shot. Click applies
+ *  it immediately (see onSelectShot) - no copy/paste involved. The Scene
+ *  JSON section below remains as a secondary/manual escape hatch (one-off
+ *  experiments not worth registering as a real shot, or handing a live
+ *  tweak back out via Copy). */
+export interface VideosPanelConfig {
+  videos: VideoDef[];
+  onSelectShot: (videoId: string, shotId: string) => void;
+}
+
+/** The "build a shot by talking, not by clicking" workflow: a text box
+ *  holding the full app state as JSON (see scenes/SceneState.ts), a Copy
+ *  button to pull the CURRENT live state out (e.g. to hand back as "here's
+ *  what I've got, adjust from here"), and an Apply button to push pasted
+ *  JSON into the app. Deliberately not a save/load library with named
+ *  slots - see this section's own doc comment in the codebase's design
+ *  notes for why that's a later, additive step once this is proven useful. */
+export interface SceneIOPanelConfig {
+  getCurrentStateJson: () => string;
+  onApplyJson: (json: string) => void;
 }
 
 /** Solar-aligned stone circle monument (StonehengeLayer) - one placement
@@ -96,11 +117,25 @@ export interface StonehengePanelConfig {
  *  Moon, always, regardless of which Scene is active. Distance/size are
  *  continuous sliders (Earth-radii units) rather than a fixed set of
  *  display tiers - drag them down for a small comprehensible diagram, up
- *  for true-feeling scale; presets (see ScenePresetDef) can dial in
- *  good-looking combinations. */
+ *  for true-feeling scale; a Scene JSON blob (see SceneIOPanelConfig) can
+ *  dial in good-looking combinations directly. */
+/** One Sun-rendering-mode button ("Dim"/"Bright"/"Textury") - see
+ *  layers/sky/SunMode.ts. */
+export interface SunModeEntryDef {
+  id: SunMode;
+  label: string;
+}
+
+export interface SunModePanelConfig {
+  entries: SunModeEntryDef[];
+  activeId: SunMode;
+  onSwitchActive: (id: SunMode) => void;
+}
+
 export interface SunAndMoonPanelConfig {
   sun: ToggleConfig;
   moon: ToggleConfig;
+  sunMode: SunModePanelConfig;
   sunEclipticPath: ToggleConfig;
   moonSkyPath: ToggleConfig;
   /** Real elliptical orbit shapes (true eccentricity) around Earth, at the
@@ -241,6 +276,7 @@ export interface SkyPanelConfig {
   radius: SliderConfig;
   shellVisible: ToggleConfig;
   wireframeOpacity: SliderConfig;
+  milkyWayVisible: ToggleConfig;
   onHemisphereModeChange: (mode: HemisphereMode) => void;
   stars: StarSystemConfig;
   constellationLines: ToggleConfig;
@@ -249,9 +285,8 @@ export interface SkyPanelConfig {
 
 export interface ControlPanelConfig {
   scene: ScenePanelConfig;
-  presets: {
-    presets: ScenePresetDef[];
-  };
+  videos: VideosPanelConfig;
+  sceneIO: SceneIOPanelConfig;
   earth: {
     visible: ToggleConfig;
     continents: ToggleConfig;
@@ -336,8 +371,11 @@ export class ControlPanel {
   readonly element: HTMLElement;
   private readonly viewButtons: Partial<Record<CameraMode, HTMLButtonElement>> = {};
   private readonly upModeButtons: Partial<Record<CameraUpMode, HTMLButtonElement>> = {};
+  private readonly sunModeButtons: Partial<Record<SunMode, HTMLButtonElement>> = {};
   private readonly sceneButtons: Record<string, HTMLButtonElement> = {};
   private readonly observerButtons: Record<string, HTMLButtonElement> = {};
+  // Keyed by `${videoId}::${shotId}` - see buildVideosSection/setActiveShot.
+  private readonly shotButtons: Record<string, HTMLButtonElement> = {};
   private readonly layerCheckboxes: Record<string, HTMLInputElement> = {};
   private readonly sliders: Record<string, HTMLInputElement> = {};
   private readonly selectedStarBody: HTMLElement;
@@ -357,7 +395,8 @@ export class ControlPanel {
     this.selectedStarBody = document.createElement("div");
 
     this.element.appendChild(this.buildSceneSection(config));
-    this.element.appendChild(this.buildPresetsSection(config));
+    this.element.appendChild(this.buildVideosSection(config));
+    this.element.appendChild(this.buildSceneIOSection(config));
     this.element.appendChild(this.buildEarthSection(config));
     this.element.appendChild(this.buildStonehengeSection(config));
     this.element.appendChild(this.buildSunAndMoonSection(config));
@@ -383,6 +422,12 @@ export class ControlPanel {
     }
   }
 
+  setActiveSunMode(mode: SunMode): void {
+    for (const [buttonMode, button] of Object.entries(this.sunModeButtons)) {
+      button?.classList.toggle("active", buttonMode === mode);
+    }
+  }
+
   /** Switches the top-level Scene tab strip's active button state. Unlike
    *  the old per-model "Real Distance" tier, nothing else needs rebuilding
    *  here - every Sun & Moon/Sky/Observer control is shared state, not
@@ -396,6 +441,16 @@ export class ControlPanel {
   setActiveObserver(id: string): void {
     for (const [entryId, button] of Object.entries(this.observerButtons)) {
       button.classList.toggle("active", entryId === id);
+    }
+  }
+
+  /** Highlights whichever shot was last clicked (see buildVideosSection) -
+   *  pass undefined to clear (e.g. once the live state has drifted from any
+   *  registered shot via manual tweaking). */
+  setActiveShot(videoId: string | undefined, shotId: string | undefined): void {
+    const activeKey = videoId && shotId ? `${videoId}::${shotId}` : undefined;
+    for (const [key, button] of Object.entries(this.shotButtons)) {
+      button.classList.toggle("active", key === activeKey);
     }
   }
 
@@ -562,15 +617,51 @@ export class ControlPanel {
     return section;
   }
 
-  private buildPresetsSection(config: ControlPanelConfig): HTMLElement {
-    const { element } = createButtonGroup(
-      config.presets.presets.map((preset) => ({ key: preset.id, label: preset.label, onClick: preset.onApply })),
-    );
-    const presetGrid = document.createElement("div");
-    presetGrid.className = "control-preset-grid";
-    presetGrid.appendChild(element);
+  /** See VideosPanelConfig's doc comment - one collapsible section per
+   *  video, one button per shot inside it. Clicking a shot applies it
+   *  immediately; setActiveShot highlights whichever was clicked last. */
+  private buildVideosSection(config: ControlPanelConfig): HTMLElement {
+    const { videos, onSelectShot } = config.videos;
+    if (videos.length === 0) {
+      return createSection("Videos", true, [createPlaceholder("No videos loaded (public/videos.json is empty or missing).")]);
+    }
 
-    return createSection("Presets", true, [presetGrid]);
+    const videoSections = videos.map((video) => {
+      const shotButtons = video.shots.map((shot) => {
+        const button = createButton(shot.title, () => onSelectShot(video.id, shot.id));
+        this.shotButtons[`${video.id}::${shot.id}`] = button;
+        return button;
+      });
+      return createSection(video.title, false, shotButtons);
+    });
+
+    return createSection("Videos", true, videoSections);
+  }
+
+  /** See SceneIOPanelConfig's doc comment - a secondary/manual escape hatch
+   *  now that Videos above is the primary way scenes get loaded: paste JSON
+   *  in, click Apply for a one-off not worth registering as a real shot;
+   *  click Copy to pull the current state back out (e.g. to hand a manual
+   *  tweak back to Claude). */
+  private buildSceneIOSection(config: ControlPanelConfig): HTMLElement {
+    const io = config.sceneIO;
+    const textarea = createTextarea("Scene JSON", 8);
+
+    const copyButton = createButton("Copy Current State", () => {
+      const json = io.getCurrentStateJson();
+      textarea.input.value = json;
+      navigator.clipboard?.writeText(json).catch(() => {});
+    });
+    const applyButton = createButton("Apply", () => io.onApplyJson(textarea.input.value));
+    const buttonRow = document.createElement("div");
+    buttonRow.className = "control-section--row";
+    buttonRow.append(copyButton, applyButton);
+
+    return createSection("Scene JSON", true, [
+      createPlaceholder("Paste a scene JSON blob and Apply it, or Copy the current state to hand off."),
+      textarea.element,
+      buttonRow,
+    ]);
   }
 
   private buildEarthSection(config: ControlPanelConfig): HTMLElement {
@@ -579,7 +670,10 @@ export class ControlPanel {
     // see main.ts's EARTH_AXIAL_TILT_DEG wiring) without ControlPanel
     // needing its own import of that astronomy constant.
     const defaultTiltDeg = config.earth.axialTilt.value;
-    const tiltSlider = createSlider({ ...config.earth.axialTilt, label: "Axial Tilt", format: config.earth.axialTilt.format ?? ((v) => `${v}°`) });
+    const tiltSlider = this.registerSlider(
+      "axialTilt",
+      createSlider({ ...config.earth.axialTilt, label: "Axial Tilt", format: config.earth.axialTilt.format ?? ((v) => `${v}°`) }),
+    );
     const resetTiltButton = createButton(`Reset to ${defaultTiltDeg}°`, () => {
       tiltSlider.input.value = String(defaultTiltDeg);
       tiltSlider.input.dispatchEvent(new Event("input", { bubbles: true }));
@@ -588,7 +682,10 @@ export class ControlPanel {
     const content = [
       this.registerLayerCheckbox("earthBase", createCheckbox("Visible", config.earth.visible.checked, config.earth.visible.onChange)).element,
       this.registerLayerCheckbox("continents", createCheckbox("Continents", config.earth.continents.checked, config.earth.continents.onChange)).element,
-      createCheckbox("Rotation", config.earth.rotation.checked, config.earth.rotation.onChange).element,
+      this.registerLayerCheckbox(
+        "earthRotation",
+        createCheckbox("Rotation", config.earth.rotation.checked, config.earth.rotation.onChange),
+      ).element,
       this.registerLayerCheckbox("axis", createCheckbox("Axis", config.earth.axis.checked, config.earth.axis.onChange)).element,
       tiltSlider.element,
       resetTiltButton,
@@ -632,9 +729,23 @@ export class ControlPanel {
   private buildSunAndMoonSection(config: ControlPanelConfig): HTMLElement {
     const sm = config.sunAndMoon;
 
+    const { element: sunModeElement, buttons: sunModeButtons } = createButtonGroup(
+      sm.sunMode.entries.map((entry) => ({
+        key: entry.id,
+        label: entry.label,
+        onClick: () => sm.sunMode.onSwitchActive(entry.id),
+      })),
+    );
+    for (const [mode, button] of Object.entries(sunModeButtons)) {
+      this.sunModeButtons[mode as SunMode] = button;
+    }
+    this.setActiveSunMode(sm.sunMode.activeId);
+
     return createSection("Sun & Moon", true, [
       this.registerLayerCheckbox("sunMarker", createCheckbox("Sun visible", sm.sun.checked, sm.sun.onChange)).element,
       this.registerLayerCheckbox("moonMarker", createCheckbox("Moon visible", sm.moon.checked, sm.moon.onChange)).element,
+      createSubsectionHeading("Sun Mode"),
+      sunModeElement,
       this.registerLayerCheckbox(
         "sunEclipticPath",
         createCheckbox("Sun Ecliptic Path", sm.sunEclipticPath.checked, sm.sunEclipticPath.onChange),
@@ -655,9 +766,9 @@ export class ControlPanel {
       createSubsectionHeading("Distance & Size"),
       this.registerSlider("sunDistanceRadii", createSlider({ ...sm.sunDistance, label: "Sun-Earth Distance" })).element,
       this.registerSlider("moonDistanceRadii", createSlider({ ...sm.moonDistance, label: "Moon-Earth Distance" })).element,
-      createSlider({ ...sm.sunSize, label: "Sun Size" }).element,
-      createSlider({ ...sm.moonSize, label: "Moon Size" }).element,
-      createSlider({ ...sm.moonDarkSideBrightness, label: "Moon Dark Side Brightness" }).element,
+      this.registerSlider("sunSizeRadii", createSlider({ ...sm.sunSize, label: "Sun Size" })).element,
+      this.registerSlider("moonSizeRadii", createSlider({ ...sm.moonSize, label: "Moon Size" })).element,
+      this.registerSlider("moonDarkSideBrightness", createSlider({ ...sm.moonDarkSideBrightness, label: "Moon Dark Side Brightness" })).element,
     ]);
   }
 
@@ -677,7 +788,8 @@ export class ControlPanel {
       createCheckbox("Show All Sky Paths", planets.allSkyPathsVisible.checked, planets.allSkyPathsVisible.onChange).element,
       createCheckbox("Show Planet Labels", planets.labelsVisible.checked, planets.labelsVisible.onChange).element,
       createCheckbox("Show Path Labels", planets.pathLabelsVisible.checked, planets.pathLabelsVisible.onChange).element,
-      createSlider({ ...planets.visibilityBoost, label: "Visibility Boost (Size & Brightness)" }).element,
+      this.registerSlider("planetVisibilityBoost", createSlider({ ...planets.visibilityBoost, label: "Visibility Boost (Size & Brightness)" }))
+        .element,
       createSubsectionHeading("Per-Planet"),
       ...rows,
     ]);
@@ -763,25 +875,44 @@ export class ControlPanel {
     // Obscures the NEAR hemisphere (facing the external camera) rather than
     // the far one: the near side sits visually between the camera and
     // Earth, cluttering the view.
-    const hide = createCheckbox("Hide near hemisphere", false, (checked) => {
-      if (checked) fade.input.checked = false;
-      applyHemisphereMode();
-    });
-    const fade = createCheckbox("Fade near hemisphere", false, (checked) => {
-      if (checked) hide.input.checked = false;
-      applyHemisphereMode();
-    });
+    // Registered as UI-only ids (not real LayerRegistry layers - same
+    // pattern the per-planet path checkboxes use, see buildPlanetToggleRow)
+    // purely so a SceneState apply can drive their checked state via
+    // syncLayerToggles; the actual visual effect always goes through
+    // applyHemisphereMode/onHemisphereModeChange below, never layers.show.
+    const hide = this.registerLayerCheckbox(
+      "hideNearHemisphere",
+      createCheckbox("Hide near hemisphere", false, (checked) => {
+        if (checked) fade.input.checked = false;
+        applyHemisphereMode();
+      }),
+    );
+    const fade = this.registerLayerCheckbox(
+      "fadeNearHemisphere",
+      createCheckbox("Fade near hemisphere", false, (checked) => {
+        if (checked) hide.input.checked = false;
+        applyHemisphereMode();
+      }),
+    );
     const applyHemisphereMode = (): void => {
       const mode: HemisphereMode = hide.input.checked ? "hide" : fade.input.checked ? "fade" : "none";
       sky.onHemisphereModeChange(mode);
     };
 
+    const milkyWayVisible = this.registerLayerCheckbox(
+      "milkyWayPanorama",
+      createCheckbox("Show Milky Way", sky.milkyWayVisible.checked, sky.milkyWayVisible.onChange),
+    );
+
     const starVisible = this.registerLayerCheckbox("stars", createCheckbox("Stars visible", sky.stars.visible.checked, sky.stars.visible.onChange));
-    const magnitudeSlider = createSlider({
-      ...sky.stars.limitingMagnitude,
-      label: "Limiting Magnitude",
-      format: sky.stars.limitingMagnitude.format ?? ((v) => v.toFixed(1)),
-    });
+    const magnitudeSlider = this.registerSlider(
+      "starLimitingMagnitude",
+      createSlider({
+        ...sky.stars.limitingMagnitude,
+        label: "Limiting Magnitude",
+        format: sky.stars.limitingMagnitude.format ?? ((v) => v.toFixed(1)),
+      }),
+    );
     const showAllButton = document.createElement("button");
     showAllButton.type = "button";
     showAllButton.className = "control-button";
@@ -797,16 +928,24 @@ export class ControlPanel {
 
       this.registerSlider("skyRadius", createSlider({ ...sky.radius, label: "Sky Radius" })).element,
       shellVisible.element,
-      createSlider({ ...sky.wireframeOpacity, label: "Shell Wireframe Opacity", format: sky.wireframeOpacity.format ?? percentFormat }).element,
+      this.registerSlider(
+        "wireframeOpacity",
+        createSlider({ ...sky.wireframeOpacity, label: "Shell Wireframe Opacity", format: sky.wireframeOpacity.format ?? percentFormat }),
+      ).element,
       hide.element,
       fade.element,
+
+      createSubsectionHeading("Milky Way"),
+      milkyWayVisible.element,
 
       createSubsectionHeading("Stars"),
       starVisible.element,
       magnitudeSlider.element,
-      createSlider({ ...sky.stars.brightness, label: "Brightness", format: sky.stars.brightness.format ?? percentFormat }).element,
-      createSlider({ ...sky.stars.size, label: "Size" }).element,
-      createSlider({ ...sky.stars.opacity, label: "Opacity", format: sky.stars.opacity.format ?? percentFormat }).element,
+      this.registerSlider("starBrightness", createSlider({ ...sky.stars.brightness, label: "Brightness", format: sky.stars.brightness.format ?? percentFormat }))
+        .element,
+      this.registerSlider("starSize", createSlider({ ...sky.stars.size, label: "Size" })).element,
+      this.registerSlider("starOpacity", createSlider({ ...sky.stars.opacity, label: "Opacity", format: sky.stars.opacity.format ?? percentFormat }))
+        .element,
       showAllButton,
 
       createSubsectionHeading("Constellations"),
@@ -877,13 +1016,18 @@ export class ControlPanel {
       clearTargetButton,
       reticlesCheckbox.element,
       createSubsectionHeading("Minimap (Ground View)"),
-      createCheckbox("Show Minimap", config.camera.minimapVisible.checked, config.camera.minimapVisible.onChange)
-        .element,
-      createSlider({
-        ...config.camera.minimapOpacity,
-        label: "Opacity",
-        format: config.camera.minimapOpacity.format ?? percentFormat,
-      }).element,
+      this.registerLayerCheckbox(
+        "minimapVisible",
+        createCheckbox("Show Minimap", config.camera.minimapVisible.checked, config.camera.minimapVisible.onChange),
+      ).element,
+      this.registerSlider(
+        "minimapOpacity",
+        createSlider({
+          ...config.camera.minimapOpacity,
+          label: "Opacity",
+          format: config.camera.minimapOpacity.format ?? percentFormat,
+        }),
+      ).element,
     ]);
   }
 
@@ -920,7 +1064,10 @@ export class ControlPanel {
 
     const content = [
       playPauseButton,
-      createSlider({ ...config.time.timeScale, label: "Time Scale", format: config.time.timeScale.format ?? ((v) => `${v}x`) }).element,
+      this.registerSlider(
+        "timeScale",
+        createSlider({ ...config.time.timeScale, label: "Time Scale", format: config.time.timeScale.format ?? ((v) => `${v}x`) }),
+      ).element,
       stepButtons,
       dateInput.element,
       resetButton,

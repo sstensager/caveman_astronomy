@@ -11,6 +11,13 @@ import { COLORS } from "./constants";
  * MOON_SIZE_DEFAULT_RADII are also tuned by eye rather than to true scale -
  * Jupiter/Saturn read noticeably larger than Mercury without being
  * physically accurate gas-giant proportions.
+ *
+ * Sized so the Planets section's "Visibility Boost" slider's OWN floor
+ * (PLANET_VISIBILITY_BOOST_MIN = 1x, in main.ts) reads as a bright
+ * near-point - realistically, naked-eye planets are unresolved points, not
+ * discs - while its ceiling (4x) reproduces this file's previous marker
+ * sizes, so the old "clearly resolved sphere" look is still reachable, just
+ * no longer the unavoidable floor.
  */
 export interface PlanetRenderConfig {
   id: PlanetId;
@@ -20,9 +27,9 @@ export interface PlanetRenderConfig {
 }
 
 export const PLANET_RENDER_CONFIG: PlanetRenderConfig[] = [
-  { id: "mercury", label: "Mercury", color: COLORS.mercury, markerSizeRadii: 0.25 },
-  { id: "venus", label: "Venus", color: COLORS.venus, markerSizeRadii: 0.45 },
-  { id: "mars", label: "Mars", color: COLORS.mars, markerSizeRadii: 0.3 },
-  { id: "jupiter", label: "Jupiter", color: COLORS.jupiter, markerSizeRadii: 1.2 },
-  { id: "saturn", label: "Saturn", color: COLORS.saturn, markerSizeRadii: 1.0 },
+  { id: "mercury", label: "Mercury", color: COLORS.mercury, markerSizeRadii: 0.0625 },
+  { id: "venus", label: "Venus", color: COLORS.venus, markerSizeRadii: 0.1125 },
+  { id: "mars", label: "Mars", color: COLORS.mars, markerSizeRadii: 0.075 },
+  { id: "jupiter", label: "Jupiter", color: COLORS.jupiter, markerSizeRadii: 0.3 },
+  { id: "saturn", label: "Saturn", color: COLORS.saturn, markerSizeRadii: 0.25 },
 ];

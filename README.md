@@ -75,8 +75,13 @@ src/
   interaction/       Pointer-driven interactions: click-to-select a star,
                      hover-and-drag an observer's pin, click-to-target the
                      Sun/Moon/Earth for the camera to center on and follow.
-  ui/                The control panel (plain DOM, no framework) and scene
-                     presets.
+  ui/                The control panel (plain DOM, no framework).
+  scenes/            The SceneState type - a full serializable snapshot of
+                     everything the control panel can change. Captured/
+                     applied via the panel's Scene JSON section (paste JSON
+                     in, Apply; Copy pulls the current state back out) -
+                     the way scenes now get built, in place of the old
+                     hardcoded preset list.
   core/               Simulation clock (sim time vs. real time, play/pause,
                      speed).
   config/, utils/    Display-scale constants and small shared helpers
@@ -94,8 +99,10 @@ src/data/            The preprocessed local datasets these scripts produce,
 Almost everything visible is a `Layer` (`src/layers/Layer.ts`): an id,
 label, an optional `object3D`, `setVisible()`, and an optional per-frame
 `update()`. A `LayerRegistry` holds every layer and is what the control
-panel's checkboxes and scene presets both drive (`layers.show({ id: bool
-})`). `CompositeLayer` fuses several layers under one checkbox when a
+panel's checkboxes drive (`layers.show({ id: bool })`); `getVisibility()`
+hands back a full id->boolean snapshot, the catch-all bucket a captured
+`SceneState` uses for plain on/off layers. `CompositeLayer` fuses several
+layers under one checkbox when a
 single concept has multiple render representations (e.g. "Show Orbit
 Lines" drives both the Sun's and the Moon's orbit-line layers together).
 

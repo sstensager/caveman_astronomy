@@ -8,6 +8,13 @@ import type { Layer } from "./Layer";
  */
 export class LayerRegistry {
   private readonly layers = new Map<string, Layer>();
+  // Mirrors the last value passed through show() for each id - lets
+  // getVisibility() hand back a full snapshot without every Layer
+  // implementation needing its own visibility getter. Populated lazily (only
+  // ids show() has actually been called with), which is fine in practice:
+  // main.ts always calls show() with every registered layer's default state
+  // once at startup before anything reads it back.
+  private readonly visibility = new Map<string, boolean>();
 
   register(layer: Layer): void {
     this.layers.set(layer.id, layer);
@@ -31,7 +38,15 @@ export class LayerRegistry {
         continue;
       }
       layer.setVisible(visible);
+      this.visibility.set(id, visible);
     }
+  }
+
+  /** A full id->visible snapshot of every layer show() has touched so far -
+   *  the catch-all bucket a SceneState capture uses for plain on/off layers
+   *  (see scenes/SceneState.ts). */
+  getVisibility(): Record<string, boolean> {
+    return Object.fromEntries(this.visibility);
   }
 
   update(deltaSeconds: number): void {

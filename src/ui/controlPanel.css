@@ -104,12 +104,15 @@
   color: rgba(240, 240, 245, 1);
 }
 
-.control-preset-grid .control-section--row {
-  flex-wrap: wrap;
-}
-
-.control-preset-grid .control-button {
-  flex: 1 1 calc(50% - 4px);
+.control-textarea {
+  width: 100%;
+  resize: vertical;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 6px;
+  color: inherit;
+  font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+  padding: 6px 8px;
 }
 
 .control-section--row {

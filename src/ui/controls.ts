@@ -171,6 +171,31 @@ export function createSection(title: string, defaultOpen: boolean, content: HTML
   return details;
 }
 
+export interface TextareaControl {
+  element: HTMLElement;
+  input: HTMLTextAreaElement;
+}
+
+/** A labeled multi-line text box - used for the Scene JSON section's
+ *  paste-in/copy-out box (see ControlPanel's buildSceneIOSection). */
+export function createTextarea(labelText: string, rows: number): TextareaControl {
+  const element = document.createElement("div");
+  element.className = "control-slider";
+
+  const label = document.createElement("label");
+  label.className = "control-label";
+  label.textContent = labelText;
+
+  const input = document.createElement("textarea");
+  input.className = "control-textarea";
+  input.rows = rows;
+  input.spellcheck = false;
+
+  element.appendChild(label);
+  element.appendChild(input);
+  return { element, input };
+}
+
 export function createSubsectionHeading(text: string): HTMLElement {
   const heading = document.createElement("div");
   heading.className = "control-subsection-heading";

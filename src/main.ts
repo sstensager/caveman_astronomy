@@ -17,6 +17,7 @@ import { findRotationForHorizonAzimuth } from "./utils/rotationAlignment";
 import { StarsLayer } from "./layers/sky/StarsLayer";
 import { AtmosphereLayer } from "./layers/sky/AtmosphereLayer";
 import { CelestialSphereShell } from "./layers/sky/CelestialSphereShell";
+import { MilkyWayPanoramaLayer } from "./layers/sky/MilkyWayPanoramaLayer";
 import { ConstellationLinesLayer } from "./layers/sky/ConstellationLinesLayer";
 import { ConstellationLabelsLayer } from "./layers/sky/ConstellationLabelsLayer";
 import { OrbitLineLayer } from "./layers/sky/OrbitLineLayer";
@@ -48,11 +49,12 @@ import { AltAzGridLayer } from "./observers/AltAzGridLayer";
 import { CameraManager } from "./cameras/CameraManager";
 import { CameraMode } from "./cameras/CameraMode";
 import { CameraUpMode } from "./cameras/CameraUpMode";
+import { SunMode } from "./layers/sky/SunMode";
+import { createSunGlowSprite } from "./layers/sky/sunGlow";
 import { GroundMoveControls } from "./cameras/GroundMoveControls";
 import { ControlPanel, type ControlPanelConfig, type ViewModeDef } from "./ui/ControlPanel";
 import { TimeHud } from "./ui/TimeHud";
 import { MinimapHud } from "./ui/MinimapHud";
-import { SCENE_PRESETS } from "./ui/scenePresets";
 import { StarPicker } from "./interaction/StarPicker";
 import { SelectedStarMarker } from "./interaction/SelectedStarMarker";
 import { ObserverDragHandler } from "./interaction/ObserverDragHandler";
@@ -94,6 +96,8 @@ import {
   SUN_SIZE_DEFAULT_RADII,
   SUN_SIZE_MIN_RADII,
   SUN_SIZE_MAX_RADII,
+  SUN_GLOW_SCALE_MULTIPLIER,
+  SUN_GLOW_OPACITY,
   CELESTIAL_SPHERE_WIREFRAME_OPACITY_DEFAULT,
   MINIMAP_OPACITY_DEFAULT,
   ZENITH_DOT_SIZE,
@@ -114,6 +118,8 @@ import {
   PLANET_ORBITAL_ELEMENTS,
 } from "./astronomy/constants";
 import { PLANET_RENDER_CONFIG } from "./config/planets";
+import { SCENE_STATE_VERSION, type SceneState } from "./scenes/SceneState";
+import { EMPTY_VIDEO_LIBRARY, type VideoLibrary } from "./scenes/VideoLibrary";
 
 const container = document.querySelector<HTMLDivElement>("#app");
 if (!container) throw new Error("#app container not found");
@@ -197,6 +203,15 @@ let nextObserverNumber = 1;
 // ANDed with the live groundViewActive check in the render loop - see
 // MinimapHud's class doc comment.
 let minimapManuallyVisible = true;
+let minimapOpacity = MINIMAP_OPACITY_DEFAULT;
+let earthAxialTiltDeg = EARTH_AXIAL_TILT_DEG;
+let hemisphereMode: HemisphereMode = "none";
+const starSettings: { limitingMagnitude: number; size: number; brightness: number; opacity: number } = { ...STARS_DEFAULT };
+// The click-to-target anchor/look-at body ids (see setAnchorBody/
+// setLookAtBody below) - mirrored here purely so captureSceneState has a
+// live value to read back, same reasoning as sunSizeRadii etc. above.
+let anchorBodyId: string | undefined;
+let lookAtBodyId: string | undefined;
 
 // The one shared sky/celestial-sphere radius - stars, constellations, the
 // wireframe shell, the Sun/Moon sky-path lines, and each observer's zenith
@@ -303,6 +318,7 @@ const constellationNames = new ConstellationLabelsLayer({
 });
 
 const celestialSphereShell = new CelestialSphereShell(skyRadius, getActiveObserver);
+const milkyWayPanorama = new MilkyWayPanoramaLayer(TEXTURES.milkyWay, skyRadius, getActiveObserver);
 
 // The path each body traces across the sky over one full orbital period
 // (the Sun's is literally the ecliptic) - direction-only, drawn on the
@@ -344,6 +360,7 @@ function setSkyRadius(radius: number): void {
   constellationLines.setRadius(radius);
   constellationNames.setRadius(radius);
   celestialSphereShell.setRadius(radius);
+  milkyWayPanorama.setRadius(radius);
   sunEclipticPath.setRadius(radius);
   moonSkyPath.setRadius(radius);
   planetLayers.forEach((p) => p.skyPath.setRadius(radius));
@@ -366,6 +383,16 @@ function setSkyRadius(radius: number): void {
 // math and its model-agnostic proof.
 let sunDistanceRadii = SUN_DISTANCE_DEFAULT_RADII;
 let moonDistanceRadii = MOON_DISTANCE_DEFAULT_RADII;
+// Mirrors of slider values that otherwise only ever flow straight into a
+// setter (e.g. sunMarker.setMarkerSize) with nothing keeping the number
+// itself around - captureSceneState needs a live value to read back, so
+// each of these gets set alongside its real setter call in panelConfig
+// below, never used for anything else.
+let sunSizeRadii = SUN_SIZE_DEFAULT_RADII;
+let moonSizeRadii = MOON_SIZE_DEFAULT_RADII;
+let moonDarkSideBrightness = MOON_DARK_SIDE_BRIGHTNESS_DEFAULT;
+let sunMode: SunMode = SunMode.Dim;
+let wireframeOpacity = CELESTIAL_SPHERE_WIREFRAME_OPACITY_DEFAULT;
 
 const sunMarker = new OrbitingBodyMarkerLayer({
   id: "sunMarker",
@@ -376,6 +403,13 @@ const sunMarker = new OrbitingBodyMarkerLayer({
   getPosition: () =>
     getSunOffsetFromEarth(getActiveModel().getState(getSimulationTime()), (EARTH_RADIUS * sunDistanceRadii) / EARTH_ORBIT_RADIUS),
 });
+// Parented under the Sun marker's own object3D (not tracked separately) so
+// it inherits that marker's live position AND Sun-Size-slider scale for
+// free - see createSunGlowSprite's doc comment. Only visible in Bright mode
+// (see switchSunMode); BodyTargetPicker's raycast is non-recursive, so this
+// child never interferes with click-to-target picking on the Sun itself.
+const sunGlowSprite = createSunGlowSprite(SUN_MARKER_SIZE_DEFAULT, SUN_GLOW_SCALE_MULTIPLIER, SUN_GLOW_OPACITY);
+sunMarker.object3D.add(sunGlowSprite);
 const moonMarker = new OrbitingBodyMarkerLayer({
   id: "moonMarker",
   label: "Moon",
@@ -998,7 +1032,9 @@ function applyPathLabelsVisibility(): void {
  *  in config/constants.ts. Scales each marker's own authored size AND its
  *  color brightness together, since planets are small, flat-colored, and
  *  dim against the star field by default. */
+let planetVisibilityBoost = PLANET_VISIBILITY_BOOST_DEFAULT;
 function setPlanetVisibilityBoost(multiplier: number): void {
+  planetVisibilityBoost = multiplier;
   for (const p of planetLayers) {
     p.marker.setMarkerSize(EARTH_RADIUS * p.cfg.markerSizeRadii * multiplier);
     p.marker.setColorBrightness(multiplier);
@@ -1043,6 +1079,7 @@ layers.register(atmosphere);
 layers.register(constellationLines);
 layers.register(constellationNames);
 layers.register(celestialSphereShell);
+layers.register(milkyWayPanorama);
 layers.register(sunEclipticPath);
 layers.register(moonSkyPath);
 layers.register(sunMarker);
@@ -1077,6 +1114,7 @@ scene.add(stars.object3D);
 scene.add(constellationLines.object3D);
 scene.add(constellationNames.object3D);
 scene.add(celestialSphereShell.object3D);
+scene.add(milkyWayPanorama.object3D);
 scene.add(sunEclipticPath.object3D, moonSkyPath.object3D);
 scene.add(targetReticles.object3D);
 
@@ -1102,6 +1140,7 @@ const defaultLayerVisibility: Record<string, boolean> = {
   constellationLines: false,
   constellationNames: false,
   celestialSphereShell: false,
+  milkyWayPanorama: true,
   sunEclipticPath: false,
   moonSkyPath: false,
   sunMarker: true,
@@ -1149,6 +1188,7 @@ const viewModes: ViewModeDef[] = [
 let controlPanel: ControlPanel;
 
 const onHemisphereModeChange = (mode: HemisphereMode): void => {
+  hemisphereMode = mode;
   celestialSphereShell.setHemisphereMode(mode);
   stars.setHemisphereMode(mode);
 };
@@ -1191,6 +1231,7 @@ function bodyPositionGetter(body: TargetableBody | undefined): (() => THREE.Vect
 
 function setAnchorBody(id: string | undefined): void {
   const body = id ? targetableBodies.find((b) => b.id === id) : undefined;
+  anchorBodyId = body?.id;
   cameraManager.setSpaceFollowTarget(bodyPositionGetter(body));
   targetReticles.setAnchorTarget(bodyPositionGetter(body));
   controlPanel.setAnchorBody(body?.label);
@@ -1198,6 +1239,7 @@ function setAnchorBody(id: string | undefined): void {
 
 function setLookAtBody(id: string | undefined): void {
   const body = id ? targetableBodies.find((b) => b.id === id) : undefined;
+  lookAtBodyId = body?.id;
   cameraManager.setSpaceLookAtTarget(bodyPositionGetter(body));
   targetReticles.setLookAtTarget(bodyPositionGetter(body));
   controlPanel.setLookAtBody(body?.label);
@@ -1242,6 +1284,29 @@ function switchCameraMode(mode: CameraMode): void {
 function switchCameraUpMode(mode: CameraUpMode): void {
   cameraManager.setSpaceUpMode(mode);
   controlPanel.setActiveUpMode(mode);
+}
+
+/** Combines OrbitingBodyMarkerLayer's two generic primitives
+ *  (setTexture/setColorBrightness) into the Sun's three named looks - see
+ *  layers/sky/SunMode.ts. */
+function switchSunMode(mode: SunMode): void {
+  sunMode = mode;
+  switch (mode) {
+    case SunMode.Dim:
+      sunMarker.setTexture(null);
+      sunMarker.setColorBrightness(1);
+      break;
+    case SunMode.Bright:
+      sunMarker.setTexture(null);
+      sunMarker.setFlatColor(0xffffff);
+      break;
+    case SunMode.Textury:
+      sunMarker.setTexture(TEXTURES.sunHalpha);
+      sunMarker.setColorBrightness(1);
+      break;
+  }
+  sunGlowSprite.visible = mode === SunMode.Bright;
+  controlPanel.setActiveSunMode(mode);
 }
 
 /** Switching the Scene changes ONLY which body is fixed at the world
@@ -1289,6 +1354,218 @@ function snapRotationToStonehengeAlignment(day: SimulationTime, declinationDeg: 
   if (theta !== undefined) earthBase.rotationGroup.rotation.y = theta;
 }
 
+/** Pulls every piece of control-panel-reachable state into one serializable
+ *  snapshot - see scenes/SceneState.ts's own doc comment for why this (not
+ *  a hand-picked subset) is the contract. */
+function captureSceneState(): SceneState {
+  return {
+    version: SCENE_STATE_VERSION,
+    scene: activeScene,
+    simDay: getSimulationTime(),
+    timeSpeed: simClock.timeSpeed,
+    paused: simClock.paused,
+    cameraMode: cameraManager.getMode(),
+    cameraUpMode: cameraManager.getSpaceUpMode(),
+    spaceCameraDistance: cameraManager.getSpaceDistance(),
+    hemisphereMode,
+    skyRadius,
+    wireframeOpacity,
+    sunDistanceRadii,
+    moonDistanceRadii,
+    sunSizeRadii,
+    moonSizeRadii,
+    sunMode,
+    moonDarkSideBrightness,
+    earthAxialTiltDeg,
+    earthRotationEnabled: earthBase.rotationEnabled,
+    planetVisibilityBoost,
+    pathLabelsVisible,
+    earthOrbitPathVisible,
+    starLimitingMagnitude: starSettings.limitingMagnitude,
+    starBrightness: starSettings.brightness,
+    starSize: starSettings.size,
+    starOpacity: starSettings.opacity,
+    observers: observerRegistry.all().map((entry) => {
+      const { latDeg, lonDeg } = entry.station.getLatLon();
+      return { id: entry.id, label: entry.label, latDeg, lonDeg };
+    }),
+    activeObserverId: observerRegistry.getActiveId(),
+    observerMarkersVisible,
+    observerFarSideIndicatorEnabled,
+    minimapVisible: minimapManuallyVisible,
+    minimapOpacity,
+    stonehengePlacedAt: stonehenge.getPlacedLatLon(),
+    anchorBodyId,
+    lookAtBodyId,
+    planets: Object.fromEntries(
+      planetLayers.map((p) => [
+        p.cfg.id,
+        { orbitLine: p.orbitLineVisible, ptolemaic: p.ptolemaicVisible, truePath: p.truePathVisible, skyPath: p.skyPathVisible },
+      ]),
+    ),
+    layers: layers.getVisibility(),
+  };
+}
+
+/** The inverse of captureSceneState - restores every field, then re-runs
+ *  every scene-dependent recompute (planet path gating, path labels,
+ *  Earth's own orbit path) exactly like a manual Scene switch or checkbox
+ *  click would, and finally pushes the result back into the panel's own
+ *  checkbox/slider DOM via syncLayerToggles/syncSliders (see those methods'
+ *  doc comments) so the panel never shows stale controls after a JSON
+ *  apply. Observers are add-only (see ObserverRegistry's own doc comment) -
+ *  if the target state has more observers than currently exist, enough new
+ *  ones are created via addObserver() to match; matching an existing entry
+ *  to a state entry is by id, which only lines up correctly if that id
+ *  followed the same observer-1/observer-2/... convention addObserver()
+ *  itself uses (true for any state this app itself produced). */
+function applySceneState(state: SceneState): void {
+  switchScene(state.scene);
+  simClock.setElapsedDays(state.simDay);
+  simClock.timeSpeed = state.timeSpeed;
+  simClock.paused = state.paused;
+
+  switchCameraMode(state.cameraMode);
+  switchCameraUpMode(state.cameraUpMode);
+  onHemisphereModeChange(state.hemisphereMode);
+
+  setSkyRadius(state.skyRadius);
+  wireframeOpacity = state.wireframeOpacity;
+  celestialSphereShell.setWireframeOpacity(state.wireframeOpacity);
+  setSunDistanceRadii(state.sunDistanceRadii);
+  setMoonDistanceRadii(state.moonDistanceRadii);
+
+  sunSizeRadii = state.sunSizeRadii;
+  sunMarker.setMarkerSize(EARTH_RADIUS * state.sunSizeRadii);
+  switchSunMode(state.sunMode);
+  moonSizeRadii = state.moonSizeRadii;
+  moonMarker.setMarkerSize(EARTH_RADIUS * state.moonSizeRadii);
+  moonDarkSideBrightness = state.moonDarkSideBrightness;
+  moonMarker.setDarkSideBrightness(state.moonDarkSideBrightness);
+
+  earthAxialTiltDeg = state.earthAxialTiltDeg;
+  earthBase.setAxialTilt(state.earthAxialTiltDeg);
+  earthBase.rotationEnabled = state.earthRotationEnabled;
+
+  setPlanetVisibilityBoost(state.planetVisibilityBoost);
+  pathLabelsVisible = state.pathLabelsVisible;
+  earthOrbitPathVisible = state.earthOrbitPathVisible;
+
+  starSettings.limitingMagnitude = state.starLimitingMagnitude;
+  stars.setLimitingMagnitude(state.starLimitingMagnitude);
+  starSettings.brightness = state.starBrightness;
+  stars.setBrightness(state.starBrightness);
+  starSettings.size = state.starSize;
+  stars.setSize(state.starSize);
+  starSettings.opacity = state.starOpacity;
+  stars.setOpacity(state.starOpacity);
+
+  while (observerRegistry.all().length < state.observers.length) addObserver();
+  for (const obsState of state.observers) {
+    observerRegistry.get(obsState.id)?.station.setLatLon(obsState.latDeg, obsState.lonDeg);
+  }
+  if (observerRegistry.get(state.activeObserverId)) {
+    observerRegistry.setActive(state.activeObserverId);
+    controlPanel.setActiveObserver(state.activeObserverId);
+  }
+  observerMarkersVisible = state.observerMarkersVisible;
+  observerFarSideIndicatorEnabled = state.observerFarSideIndicatorEnabled;
+
+  minimapManuallyVisible = state.minimapVisible;
+  minimapOpacity = state.minimapOpacity;
+  minimapHud.setOpacity(state.minimapOpacity);
+
+  if (state.stonehengePlacedAt) {
+    stonehenge.place(state.stonehengePlacedAt.latDeg, state.stonehengePlacedAt.lonDeg);
+    controlPanel.setStonehengeLocation(state.stonehengePlacedAt);
+  }
+
+  setAnchorBody(state.anchorBodyId);
+  setLookAtBody(state.lookAtBodyId);
+  // Snap the orbit target to the anchor body's CURRENT live position before
+  // setting distance - setAnchorBody only registers the ongoing per-frame
+  // ease (see OrbitCameraRig.snapTarget's doc comment for why relying on
+  // that ease alone leaves setSpaceDistance measuring from a stale point,
+  // framing wherever the camera happened to be instead of the body).
+  const anchoredBody = state.anchorBodyId ? targetableBodies.find((b) => b.id === state.anchorBodyId) : undefined;
+  if (anchoredBody) cameraManager.setSpaceTarget(anchoredBody.object3D.getWorldPosition(new THREE.Vector3()));
+  cameraManager.setSpaceDistance(state.spaceCameraDistance);
+
+  for (const p of planetLayers) {
+    const planetState = state.planets[p.cfg.id];
+    if (!planetState) continue;
+    p.orbitLineVisible = planetState.orbitLine;
+    p.ptolemaicVisible = planetState.ptolemaic;
+    p.truePathVisible = planetState.truePath;
+    p.skyPathVisible = planetState.skyPath;
+  }
+
+  // Plain layer toggles first, then every scene-dependent recompute on top -
+  // these win over whatever the raw ids above just set for the specific
+  // sub-layers they each gate (see applyPlanetOrbitLineVisibility etc.'s own
+  // doc comments).
+  layers.show(state.layers);
+  applyEarthOrbitPathVisibility();
+  applyPlanetOrbitLineVisibility();
+  applyPlanetPtolemaicVisibility();
+  applyPlanetTruePathVisibility();
+  layers.show(Object.fromEntries(planetLayers.map((p) => [p.skyPath.id, p.skyPathVisible])));
+  applyPathLabelsVisibility();
+
+  controlPanel.setActiveScene(state.scene);
+  controlPanel.syncLayerToggles({
+    ...state.layers,
+    hideNearHemisphere: state.hemisphereMode === "hide",
+    fadeNearHemisphere: state.hemisphereMode === "fade",
+    minimapVisible: state.minimapVisible,
+    earthRotation: state.earthRotationEnabled,
+    ...Object.fromEntries(
+      planetLayers.flatMap((p) => [
+        [`${p.cfg.id}OrbitLine`, p.orbitLineVisible],
+        [`${p.cfg.id}Ptolemaic`, p.ptolemaicVisible],
+        [`${p.cfg.id}TruePath`, p.truePathVisible],
+        [`${p.cfg.id}SkyPath`, p.skyPathVisible],
+      ]),
+    ),
+  });
+  controlPanel.syncSliders({
+    skyRadius: state.skyRadius,
+    wireframeOpacity: state.wireframeOpacity,
+    sunDistanceRadii: state.sunDistanceRadii,
+    moonDistanceRadii: state.moonDistanceRadii,
+    sunSizeRadii: state.sunSizeRadii,
+    moonSizeRadii: state.moonSizeRadii,
+    moonDarkSideBrightness: state.moonDarkSideBrightness,
+    axialTilt: state.earthAxialTiltDeg,
+    planetVisibilityBoost: state.planetVisibilityBoost,
+    starLimitingMagnitude: state.starLimitingMagnitude,
+    starBrightness: state.starBrightness,
+    starSize: state.starSize,
+    starOpacity: state.starOpacity,
+    minimapOpacity: state.minimapOpacity,
+    timeScale: state.timeSpeed,
+  });
+}
+
+// Fetched at runtime (not a static import) - see VideoLibrary.ts's own doc
+// comment for why: public/videos.json is Claude's private working file
+// (gitignored), so a missing/malformed file degrades to an empty library
+// instead of breaking the whole app's build. A page refresh after Claude
+// edits the file is all that's needed to pick up changes - no rebuild.
+const videoLibrary: VideoLibrary = await fetch("/videos.json")
+  .then((res) => (res.ok ? (res.json() as Promise<VideoLibrary>) : EMPTY_VIDEO_LIBRARY))
+  .catch(() => EMPTY_VIDEO_LIBRARY);
+
+function selectShot(videoId: string, shotId: string): void {
+  const shot = videoLibrary.videos.find((v) => v.id === videoId)?.shots.find((s) => s.id === shotId);
+  if (!shot) {
+    console.warn(`selectShot: unknown video/shot "${videoId}/${shotId}"`);
+    return;
+  }
+  applySceneState(shot.state);
+  controlPanel.setActiveShot(videoId, shotId);
+}
+
 const panelConfig: ControlPanelConfig = {
   scene: {
     entries: [
@@ -1298,29 +1575,24 @@ const panelConfig: ControlPanelConfig = {
     activeId: activeScene,
     onSwitchActive: (id) => switchScene(id as SceneId),
   },
-  presets: {
-    presets: SCENE_PRESETS.map((preset) => ({
-      id: preset.id,
-      label: preset.label,
-      onApply: () => {
-        if (preset.scene) switchScene(preset.scene);
-        if (preset.skyRadius !== undefined) setSkyRadius(preset.skyRadius);
-        if (preset.sunDistanceRadii !== undefined) setSunDistanceRadii(preset.sunDistanceRadii);
-        if (preset.moonDistanceRadii !== undefined) setMoonDistanceRadii(preset.moonDistanceRadii);
-        layers.show(preset.layers);
-        if (preset.cameraMode) {
-          cameraManager.setMode(preset.cameraMode);
-          controlPanel.setActiveCameraMode(preset.cameraMode);
+  videos: {
+    videos: videoLibrary.videos,
+    onSelectShot: selectShot,
+  },
+  sceneIO: {
+    getCurrentStateJson: () => JSON.stringify(captureSceneState(), null, 2),
+    onApplyJson: (json) => {
+      try {
+        const state = JSON.parse(json) as SceneState;
+        if (state.version !== SCENE_STATE_VERSION) {
+          console.warn(`Scene JSON version ${state.version} != current ${SCENE_STATE_VERSION} - applying anyway.`);
         }
-        applyEarthOrbitPathVisibility();
-        controlPanel.syncLayerToggles(preset.layers);
-        controlPanel.syncSliders({
-          skyRadius: preset.skyRadius,
-          sunDistanceRadii: preset.sunDistanceRadii,
-          moonDistanceRadii: preset.moonDistanceRadii,
-        });
-      },
-    })),
+        applySceneState(state);
+      } catch (err) {
+        console.error("Failed to apply scene JSON:", err);
+        alert(`Couldn't apply that scene JSON - see console for details.\n${(err as Error).message}`);
+      }
+    },
   },
   earth: {
     visible: { checked: true, onChange: (v) => layers.show({ earthBase: v }) },
@@ -1332,7 +1604,10 @@ const panelConfig: ControlPanelConfig = {
       min: 0,
       max: 90,
       step: 0.5,
-      onChange: (v) => earthBase.setAxialTilt(v),
+      onChange: (v) => {
+        earthAxialTiltDeg = v;
+        earthBase.setAxialTilt(v);
+      },
     },
     groundScatter: {
       checked: defaultLayerVisibility.groundScatter,
@@ -1387,6 +1662,15 @@ const panelConfig: ControlPanelConfig = {
   sunAndMoon: {
     sun: { checked: true, onChange: (v) => layers.show({ sunMarker: v }) },
     moon: { checked: true, onChange: (v) => layers.show({ moonMarker: v }) },
+    sunMode: {
+      entries: [
+        { id: SunMode.Dim, label: "Dim" },
+        { id: SunMode.Bright, label: "Bright" },
+        { id: SunMode.Textury, label: "Textury" },
+      ],
+      activeId: sunMode,
+      onSwitchActive: switchSunMode,
+    },
     sunEclipticPath: { checked: false, onChange: (v) => layers.show({ sunEclipticPath: v }) },
     moonSkyPath: { checked: false, onChange: (v) => layers.show({ moonSkyPath: v }) },
     orbitLines: { checked: false, onChange: (v) => layers.show({ orbitLines: v }) },
@@ -1419,7 +1703,10 @@ const panelConfig: ControlPanelConfig = {
       max: SUN_SIZE_MAX_RADII,
       step: 0.1,
       format: (v: number) => `${v.toFixed(1)} R⊕`,
-      onChange: (v: number) => sunMarker.setMarkerSize(EARTH_RADIUS * v),
+      onChange: (v: number) => {
+        sunSizeRadii = v;
+        sunMarker.setMarkerSize(EARTH_RADIUS * v);
+      },
     },
     moonSize: {
       value: MOON_SIZE_DEFAULT_RADII,
@@ -1427,7 +1714,10 @@ const panelConfig: ControlPanelConfig = {
       max: MOON_SIZE_MAX_RADII,
       step: 0.05,
       format: (v: number) => `${v.toFixed(2)} R⊕`,
-      onChange: (v: number) => moonMarker.setMarkerSize(EARTH_RADIUS * v),
+      onChange: (v: number) => {
+        moonSizeRadii = v;
+        moonMarker.setMarkerSize(EARTH_RADIUS * v);
+      },
     },
     moonDarkSideBrightness: {
       value: MOON_DARK_SIDE_BRIGHTNESS_DEFAULT,
@@ -1439,7 +1729,10 @@ const panelConfig: ControlPanelConfig = {
       // See MOON_DARK_SIDE_BRIGHTNESS_MAX's doc comment for why the raw
       // value itself is kept so small (sRGB gamma).
       format: (v: number) => `${Math.round((v / MOON_DARK_SIDE_BRIGHTNESS_MAX) * 100)}%`,
-      onChange: (v: number) => moonMarker.setDarkSideBrightness(v),
+      onChange: (v: number) => {
+        moonDarkSideBrightness = v;
+        moonMarker.setDarkSideBrightness(v);
+      },
     },
   },
   planets: {
@@ -1584,12 +1877,16 @@ const panelConfig: ControlPanelConfig = {
       onChange: setSkyRadius,
     },
     shellVisible: { checked: false, onChange: (v) => layers.show({ celestialSphereShell: v }) },
+    milkyWayVisible: { checked: true, onChange: (v) => layers.show({ milkyWayPanorama: v }) },
     wireframeOpacity: {
       value: CELESTIAL_SPHERE_WIREFRAME_OPACITY_DEFAULT,
       min: 0,
       max: 1,
       step: 0.05,
-      onChange: (v) => celestialSphereShell.setWireframeOpacity(v),
+      onChange: (v) => {
+        wireframeOpacity = v;
+        celestialSphereShell.setWireframeOpacity(v);
+      },
     },
     onHemisphereModeChange,
     stars: {
@@ -1599,22 +1896,40 @@ const panelConfig: ControlPanelConfig = {
         min: STAR_LIMITING_MAGNITUDE_MIN,
         max: STAR_LIMITING_MAGNITUDE_MAX,
         step: 0.1,
-        onChange: (v) => stars.setLimitingMagnitude(v),
+        onChange: (v) => {
+          starSettings.limitingMagnitude = v;
+          stars.setLimitingMagnitude(v);
+        },
       },
       brightness: {
         value: STARS_DEFAULT.brightness,
         min: 0.1,
         max: 1,
         step: 0.05,
-        onChange: (v) => stars.setBrightness(v),
+        onChange: (v) => {
+          starSettings.brightness = v;
+          stars.setBrightness(v);
+        },
       },
-      size: { value: STARS_DEFAULT.size, min: 0.25, max: 4, step: 0.25, onChange: (v) => stars.setSize(v) },
+      size: {
+        value: STARS_DEFAULT.size,
+        min: 0.25,
+        max: 4,
+        step: 0.25,
+        onChange: (v) => {
+          starSettings.size = v;
+          stars.setSize(v);
+        },
+      },
       opacity: {
         value: STARS_DEFAULT.opacity,
         min: 0.1,
         max: 1,
         step: 0.05,
-        onChange: (v) => stars.setOpacity(v),
+        onChange: (v) => {
+          starSettings.opacity = v;
+          stars.setOpacity(v);
+        },
       },
     },
     constellationLines: { checked: false, onChange: (v) => layers.show({ constellationLines: v }) },
@@ -1648,7 +1963,10 @@ const panelConfig: ControlPanelConfig = {
       min: 0,
       max: 1,
       step: 0.05,
-      onChange: (v) => minimapHud.setOpacity(v),
+      onChange: (v) => {
+        minimapOpacity = v;
+        minimapHud.setOpacity(v);
+      },
     },
   },
   time: {
@@ -1786,6 +2104,7 @@ renderer.setAnimationLoop(() => {
   atmosphere.updateSky(sunLightDirection, observerUp, groundViewActive);
   const skyFadeFactor = atmosphere.getFadeFactor();
   stars.setDayNightFactor(skyFadeFactor);
+  milkyWayPanorama.setDayNightFactor(skyFadeFactor);
   // Fade the Moon into the sky as it brightens - the dark side fully
   // (vanishes against blue sky), the lit side only partially (reads as
   // faint, the way a real daytime moon does) - see

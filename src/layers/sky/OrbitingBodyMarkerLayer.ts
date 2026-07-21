@@ -91,7 +91,16 @@ export class OrbitingBodyMarkerLayer implements Layer {
   private readonly sunDirection = new THREE.Vector3(1, 0, 0);
   private readonly skyColor = new THREE.Color(0x000000);
   private readonly material: THREE.MeshBasicMaterial | THREE.MeshStandardMaterial;
+  /** This marker's true configured color, immutable - the tint setTexture
+   *  restores baseColor to once a texture is cleared. */
+  private readonly originalColor: THREE.Color;
+  /** The color setColorBrightness multiplies from - options.color normally,
+   *  or white while a texture is applied (see setTexture) so the texture's
+   *  own colors show through untinted. Mutated in place (never reassigned)
+   *  by setTexture, so readonly is safe here. */
   private readonly baseColor: THREE.Color;
+  private readonly textureCache = new Map<string, THREE.Texture>();
+  private brightnessMultiplier = 1;
   private darkSideBrightness: number;
   private darkSideUniforms?: DarkSideUniforms;
 
@@ -115,6 +124,7 @@ export class OrbitingBodyMarkerLayer implements Layer {
       material.map = texture;
     }
     this.material = material;
+    this.originalColor = new THREE.Color(options.color);
     this.baseColor = material.color.clone();
 
     if (options.lit && options.darkSideBrightness !== undefined) {
@@ -198,7 +208,52 @@ export class OrbitingBodyMarkerLayer implements Layer {
    *  its geometry. Works regardless of lit/unlit - just scales whatever
    *  the material's own diffuse color is. */
   setColorBrightness(multiplier: number): void {
+    this.brightnessMultiplier = multiplier;
     this.material.color.copy(this.baseColor).multiplyScalar(multiplier);
+  }
+
+  /** Replaces baseColor outright (rather than scaling this marker's
+   *  ORIGINAL color, like setColorBrightness does) - see the Sun's "Bright"
+   *  mode (main.ts's switchSunMode). Necessary because THREE.Color works in
+   *  linear light with an sRGB encode on output: multiplying an already-hued
+   *  color (e.g. the Sun's warm 0xffcc55) up to and past clipping does NOT
+   *  land on neutral white, since the encode curve is nonlinear and the
+   *  blue channel starts from a much lower linear value than red/green -
+   *  the result reads as a yellow-tinted blowout, not a true white one.
+   *  Setting the target color directly (typically white) sidesteps that
+   *  entirely. Reapplies the current brightness multiplier afterward, same
+   *  as setTexture. */
+  setFlatColor(color: number): void {
+    this.baseColor.set(color);
+    this.setColorBrightness(this.brightnessMultiplier);
+  }
+
+  /** Live-swaps (or clears, via `null`) this marker's texture map - see the
+   *  Sun's "Textury" mode (main.ts's switchSunMode). Loaded textures are
+   *  cached per URL so repeated mode toggling doesn't re-fetch. Forces
+   *  material.needsUpdate since three.js only compiles the USE_MAP shader
+   *  path in when a map was present at the material's last compile - merely
+   *  assigning `.map` afterward is silently ignored otherwise. baseColor
+   *  switches to white while textured (so the image shows untinted) and
+   *  back to this marker's original color once cleared, then
+   *  setColorBrightness re-applies on top so the current brightness mode
+   *  survives the swap. */
+  setTexture(url: string | null): void {
+    if (url) {
+      let texture = this.textureCache.get(url);
+      if (!texture) {
+        texture = new THREE.TextureLoader().load(url);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        this.textureCache.set(url, texture);
+      }
+      this.material.map = texture;
+      this.baseColor.set(0xffffff);
+    } else {
+      this.material.map = null;
+      this.baseColor.copy(this.originalColor);
+    }
+    this.material.needsUpdate = true;
+    this.setColorBrightness(this.brightnessMultiplier);
   }
 
   /** Pushed once per frame from main.ts's render loop (see

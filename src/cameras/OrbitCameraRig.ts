@@ -105,6 +105,47 @@ export class OrbitCameraRig implements CameraRig {
     this.controls.maxDistance = distance;
   }
 
+  /** Instantly moves controls.target to `position`, bypassing
+   *  setFollowTarget's per-frame ease entirely - see this file's own test
+   *  for why this matters: OrbitControls.update() re-derives its internal
+   *  spherical offset from (camera.position - target) EVERY frame, which
+   *  makes the transform a no-op when only target changes - camera.position
+   *  never actually moves just because target eases toward a new point,
+   *  only the camera's orientation (lookAt) does. So a SceneState apply
+   *  that wants a reproducible "N units from body X" framing (see
+   *  setDistance) must snap target to body X's real position FIRST, in the
+   *  same synchronous tick - relying on the ease to get there over
+   *  subsequent frames leaves setDistance measuring from a stale point. */
+  snapTarget(position: THREE.Vector3): void {
+    this.controls.target.copy(position);
+    this.controls.update();
+  }
+
+  /** Current camera-to-target radius - the one piece of "where's the
+   *  camera looking from" state a SceneState capture needs (see
+   *  main.ts's captureSceneState). Deliberately NOT the full camera
+   *  position/orientation - angle is left as whatever the user last
+   *  dragged to, only the zoom level is captured/restored. */
+  getDistance(): number {
+    return this.camera.position.distanceTo(this.controls.target);
+  }
+
+  /** Repositions the camera along its CURRENT direction from
+   *  controls.target at the given distance - preserves whatever angle is
+   *  already dialed in (by prior dragging, or a follow-target ease still
+   *  converging), only changes the zoom level. Without this, a SceneState
+   *  apply has no way to guarantee a reproducible framing: the live camera
+   *  distance is otherwise whatever was left over from unrelated earlier
+   *  interaction in the same browser session. */
+  setDistance(distance: number): void {
+    const direction = this.camera.position.clone().sub(this.controls.target);
+    if (direction.lengthSq() === 0) direction.set(0, 0, 1);
+    direction.normalize();
+    const clamped = THREE.MathUtils.clamp(distance, this.minDistance, this.maxDistance);
+    this.camera.position.copy(this.controls.target).addScaledVector(direction, clamped);
+    this.controls.update();
+  }
+
   /** "Center on and follow this body" - see main.ts's BodyTargetPicker/
    *  setAnchorBody. Each update() eases controls.target toward the
    *  getter's current world position instead of snapping instantly, which

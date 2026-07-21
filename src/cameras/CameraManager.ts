@@ -56,6 +56,23 @@ export class CameraManager {
     this.spaceRig.setMaxDistance(distance);
   }
 
+  /** Only meaningful in Space View - see OrbitCameraRig.getDistance/
+   *  setDistance's own doc comments. */
+  getSpaceDistance(): number {
+    return this.spaceRig.getDistance();
+  }
+
+  setSpaceDistance(distance: number): void {
+    this.spaceRig.setDistance(distance);
+  }
+
+  /** Only meaningful in Space View - see OrbitCameraRig.snapTarget's own
+   *  doc comment for why a SceneState apply needs this (not just
+   *  setSpaceFollowTarget) to get a reproducible framing. */
+  setSpaceTarget(position: THREE.Vector3): void {
+    this.spaceRig.snapTarget(position);
+  }
+
   /** Only meaningful in Space View - see OrbitCameraRig.setFollowTarget.
    *  Ground View's camera is anchored to the observer station instead and
    *  has no notion of a follow target; setting one here while in Ground

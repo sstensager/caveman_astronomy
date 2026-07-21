@@ -218,7 +218,15 @@ export const PLANET_VISIBILITY_BOOST_MAX = 4;
 export const TEXTURES = {
   continents: "/textures/earth1.png",
   continentsNight: "/textures/earth_night2.png",
+  milkyWay: "/textures/milky-way-4096.webp",
+  sunHalpha: "/textures/sun-halpha.png",
 } as const;
+
+// How much wider the Bright-mode glow halo is than the Sun marker's own
+// radius, and how opaque it renders at full strength - see
+// layers/sky/sunGlow.ts and main.ts's switchSunMode.
+export const SUN_GLOW_SCALE_MULTIPLIER = 8;
+export const SUN_GLOW_OPACITY = 0.9;
 
 // --- Ground-sky atmosphere -------------------------------------------------
 // Dot-product half-width for the ground sky's day/night blend. Wider than
