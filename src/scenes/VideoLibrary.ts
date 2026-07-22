@@ -1,12 +1,16 @@
 import type { SceneState } from "./SceneState";
 
-/** One shot within a video - a title plus the full SceneState that
- *  reproduces it. Applying a shot is just applySceneState(shot.state) -
- *  see main.ts. */
+/** One shot within a video - a title plus the SceneState delta that
+ *  reproduces it. `state` only needs to carry whatever differs from
+ *  main.ts's DEFAULT_SCENE_STATE (see SceneState.ts's diffSceneState/
+ *  mergeSceneState) - a full SceneState works too, it just means every
+ *  field happens to be an explicit delta. Applying a shot is
+ *  applySceneState(mergeSceneState(shot.state, DEFAULT_SCENE_STATE)) -
+ *  see main.ts's selectShot. */
 export interface ShotDef {
   id: string;
   title: string;
-  state: SceneState;
+  state: Partial<SceneState>;
 }
 
 export interface VideoDef {

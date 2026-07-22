@@ -174,14 +174,16 @@ input[type="range"] {
 }
 
 /* Deliberately separate from .control-panel: always visible regardless of
-   the panel's collapsed sections/scroll, top-RIGHT so it never collides with
-   the panel's own top-left placement. */
-.time-hud {
+   the panel's collapsed sections/scroll, top-RIGHT by default so it never
+   collides with the panel's own top-left placement - draggable from there
+   (see TimePanel's pointer handlers), unlike .control-panel/.minimap-hud. */
+.time-panel {
   position: fixed;
   top: 16px;
   right: 16px;
   z-index: 10;
-  padding: 10px 14px;
+  width: 240px;
+  padding: 10px 14px 14px;
   background: rgba(10, 12, 20, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.12);
   border-radius: 10px;
@@ -189,18 +191,72 @@ input[type="range"] {
   color: #f0f0f5;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
   font-size: 13px;
-  text-align: right;
   user-select: none;
-  pointer-events: none;
 }
 
-.time-hud-date {
+.time-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -2px -6px 8px;
+  padding: 4px 6px;
+  border-radius: 6px;
+  cursor: grab;
+}
+
+.time-panel-header-dragging {
+  cursor: grabbing;
+}
+
+.time-panel-drag-handle {
+  color: rgba(240, 240, 245, 0.4);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.time-panel-title {
+  flex: 1;
   font-weight: 600;
 }
 
-.time-hud-speed {
+.time-panel-minimize {
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 50%;
+  background: rgba(10, 12, 20, 0.9);
+  color: #f0f0f5;
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.time-panel-minimize:hover {
+  background: rgba(30, 34, 48, 0.95);
+}
+
+.time-panel-date {
+  font-weight: 600;
+}
+
+.time-panel-rate {
   color: rgba(240, 240, 245, 0.6);
   font-variant-numeric: tabular-nums;
+}
+
+.time-panel-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+/* Collapsed: keep the header + date + rate line (still glanceable), just
+   drop the interactive controls below - mirrors .minimap-hud-minimized's
+   shrink-not-hide approach rather than display:none-ing the whole panel. */
+.time-panel-minimized .time-panel-controls {
+  display: none;
 }
 
 /* Bottom-right so it collides with neither .control-panel (top-left) nor
@@ -217,9 +273,10 @@ input[type="range"] {
   border-radius: 10px;
   backdrop-filter: blur(6px);
   user-select: none;
-  /* Unlike TimeHud, this widget has interactive controls (the minimize
-     button, and the map itself while minimized) - pointer-events is
-     re-enabled explicitly on each of those elements below. */
+  /* Most of this widget is non-interactive (the map's own live position
+     dots), so the container stays click-through; the minimize button and,
+     while minimized, the map itself have pointer-events re-enabled
+     explicitly below. */
   pointer-events: none;
 }
 

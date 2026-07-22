@@ -19,9 +19,9 @@ export interface MinimapObserverDot {
 
 /**
  * A tiny top-down map overlay showing where every observer currently
- * stands - same "external push once per frame" pattern as TimeHud (not a
- * toggleable Layer). Draws the SAME continents texture Ground View's globe
- * uses (`TEXTURES.continents`) once, then re-plots a dot per observer each
+ * stands - same "external push once per frame" pattern as TimePanel's
+ * date/rate readout (not a toggleable Layer). Draws the SAME continents
+ * texture Ground View's globe uses (`TEXTURES.continents`) once, then re-plots a dot per observer each
  * frame via `latLonToCanvasPixel` - shared math with any future land/water
  * scenery classifier, so a dot's position on this map and where that
  * observer's feet actually land on the real Earth mesh can never disagree.
@@ -39,10 +39,11 @@ export interface MinimapObserverDot {
  * section) so it can still be suppressed on demand while in Ground View
  * (e.g. for a clean video shot).
  *
- * Unlike TimeHud, this widget IS interactive (the minimize button and,
- * while minimized, the map itself), so `pointer-events` is re-enabled on
- * those two elements specifically - see the CSS. Minimizing shrinks the
- * canvas's DISPLAYED size only (CSS width/height) rather than hiding it -
+ * This widget is interactive (the minimize button and, while minimized,
+ * the map itself) despite the container itself being pointer-events:none
+ * (so empty space around the canvas stays click-through) - `pointer-events`
+ * is re-enabled on those two elements specifically - see the CSS.
+ * Minimizing shrinks the canvas's DISPLAYED size only (CSS width/height) rather than hiding it -
  * an earlier version used `display:none`, which left only the corner
  * button visible and, combined with its intentionally-overflowing corner
  * position, could render partially outside the viewport. Keeping a small

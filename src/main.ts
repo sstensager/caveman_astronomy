@@ -41,6 +41,7 @@ import { dateToSimulationDay, simulationDayToDate } from "./astronomy/calendar";
 import { STAR_CATALOG } from "./astronomy/starCatalog";
 import { RESOLVED_CONSTELLATION_CULTURES } from "./astronomy/constellationCatalog";
 import { GroundObserver } from "./observers/GroundObserver";
+import { EarthCenterObserver } from "./observers/EarthCenterObserver";
 import { ObserverStation } from "./observers/ObserverStation";
 import { ObserverRegistry, type ObserverEntry } from "./observers/ObserverRegistry";
 import { ObserverMarker } from "./observers/ObserverMarker";
@@ -53,7 +54,7 @@ import { SunMode } from "./layers/sky/SunMode";
 import { createSunGlowSprite } from "./layers/sky/sunGlow";
 import { GroundMoveControls } from "./cameras/GroundMoveControls";
 import { ControlPanel, type ControlPanelConfig, type ViewModeDef } from "./ui/ControlPanel";
-import { TimeHud } from "./ui/TimeHud";
+import { TimePanel } from "./ui/TimePanel";
 import { MinimapHud } from "./ui/MinimapHud";
 import { StarPicker } from "./interaction/StarPicker";
 import { SelectedStarMarker } from "./interaction/SelectedStarMarker";
@@ -102,8 +103,6 @@ import {
   MINIMAP_OPACITY_DEFAULT,
   ZENITH_DOT_SIZE,
   TIME_SPEED_DEFAULT,
-  TIME_SPEED_MAX,
-  TIME_SPEED_MIN,
   TIME_STEP_DAY_DAYS,
   TIME_STEP_HOUR_DAYS,
   TIME_STEP_MONTH_DAYS,
@@ -118,7 +117,7 @@ import {
   PLANET_ORBITAL_ELEMENTS,
 } from "./astronomy/constants";
 import { PLANET_RENDER_CONFIG } from "./config/planets";
-import { SCENE_STATE_VERSION, type SceneState } from "./scenes/SceneState";
+import { SCENE_STATE_VERSION, diffSceneState, mergeSceneState, type SceneState } from "./scenes/SceneState";
 import { EMPTY_VIDEO_LIBRARY, type VideoLibrary } from "./scenes/VideoLibrary";
 
 const container = document.querySelector<HTMLDivElement>("#app");
@@ -197,7 +196,7 @@ earthBase.rotationGroup.add(stonehenge.object3D);
 // Pins render for every entry simultaneously; each entry's zenith/alt-az
 // grid ALSO render independently of which one is "active".
 const observerRegistry = new ObserverRegistry();
-let observerMarkersVisible = true;
+let observerMarkersVisible = false;
 let observerFarSideIndicatorEnabled = true;
 let nextObserverNumber = 1;
 // ANDed with the live groundViewActive check in the render loop - see
@@ -278,19 +277,37 @@ nextObserverNumber += 1;
 const getActiveObserver = () => observerRegistry.getActive().observer;
 const getSimulationTime = () => simClock.getElapsedDays();
 
+// Fixed at Earth's own center - see EarthCenterObserver's own doc comment
+// for why the sky layers below need this INSTEAD of the real active
+// observer whenever Space View (which orbits Earth's center, not any one
+// observer's spot on the surface) is active.
+const earthCenterObserver = new EarthCenterObserver(earthBase.object3D);
+// Mirrors cameraManager's mode (kept in sync by switchCameraMode below)
+// rather than reading cameraManager directly - cameraManager isn't
+// constructed until later in this file, and at least one sky layer
+// (ConstellationLabelsLayer) calls update() SYNCHRONOUSLY during its own
+// constructor, i.e. before cameraManager exists, which would throw
+// (TDZ) if this read cameraManager.getMode() directly. Starts at
+// CameraMode.Space to match CameraManager's own default initialMode.
+let activeCameraModeForSky: CameraMode = CameraMode.Space;
+const getSkyRecenterObserver = () => (activeCameraModeForSky === CameraMode.Space ? earthCenterObserver : getActiveObserver());
+
 // --- Sky: stars, constellations, celestial sphere shell --------------------
 // ONE tier each, spanning "small comprehensible diagram" to "immersive
 // infinite backdrop" via skyRadius (see its own doc comment above) rather
 // than two separate parallel systems with their own duplicated controls.
-// All observer-centered (getObserver) - the celestial sphere IS centered on
-// the observer, which is exactly what shrinking skyRadius demonstrates.
+// All recentered via getSkyRecenterObserver - the real active observer in
+// Ground View (the celestial sphere IS centered on the observer, which is
+// exactly what shrinking skyRadius demonstrates) or Earth's center in Space
+// View - see EarthCenterObserver's doc comment for why Space View needs
+// the distinction.
 
 const stars = new StarsLayer({
   id: "stars",
   label: "Stars",
   group: "Sky.Observation",
   radius: skyRadius,
-  getObserver: getActiveObserver,
+  getObserver: getSkyRecenterObserver,
   catalog: STAR_CATALOG,
   ...STARS_DEFAULT,
   supportsHemisphereFade: true,
@@ -306,7 +323,7 @@ const constellationLines = new ConstellationLinesLayer({
   group: "Sky.Observation",
   radius: skyRadius,
   constellations: ALL_CONSTELLATIONS,
-  getObserver: getActiveObserver,
+  getObserver: getSkyRecenterObserver,
 });
 const constellationNames = new ConstellationLabelsLayer({
   id: "constellationNames",
@@ -314,11 +331,11 @@ const constellationNames = new ConstellationLabelsLayer({
   group: "Sky.Observation",
   radius: skyRadius,
   constellations: ALL_CONSTELLATIONS,
-  getObserver: getActiveObserver,
+  getObserver: getSkyRecenterObserver,
 });
 
-const celestialSphereShell = new CelestialSphereShell(skyRadius, getActiveObserver);
-const milkyWayPanorama = new MilkyWayPanoramaLayer(TEXTURES.milkyWay, skyRadius, getActiveObserver);
+const celestialSphereShell = new CelestialSphereShell(skyRadius, getSkyRecenterObserver);
+const milkyWayPanorama = new MilkyWayPanoramaLayer(TEXTURES.milkyWay, skyRadius, getSkyRecenterObserver);
 
 // The path each body traces across the sky over one full orbital period
 // (the Sun's is literally the ecliptic) - direction-only, drawn on the
@@ -331,7 +348,7 @@ const sunEclipticPath = new SkyPathLineLayer({
   relativeToId: BodyIds.Earth,
   periodDays: EARTH_ORBIT_PERIOD_DAYS,
   getModel: getActiveModel,
-  getObserver: getActiveObserver,
+  getObserver: getSkyRecenterObserver,
   getSimulationTime,
   radius: skyRadius,
   color: COLORS.sun,
@@ -344,7 +361,7 @@ const moonSkyPath = new SkyPathLineLayer({
   relativeToId: BodyIds.Earth,
   periodDays: MOON_ORBIT_PERIOD_DAYS,
   getModel: getActiveModel,
-  getObserver: getActiveObserver,
+  getObserver: getSkyRecenterObserver,
   getSimulationTime,
   radius: skyRadius,
   color: COLORS.moon,
@@ -764,7 +781,7 @@ const planetLayers = PLANET_RENDER_CONFIG.map((cfg) => {
     relativeToId: BodyIds.Earth,
     periodDays: synodicPeriodDays(elements.periodDays),
     getModel: getActiveModel,
-    getObserver: getActiveObserver,
+    getObserver: getSkyRecenterObserver,
     getSimulationTime,
     radius: skyRadius,
     color: cfg.color,
@@ -869,7 +886,7 @@ const planetLayers = PLANET_RENDER_CONFIG.map((cfg) => {
         color: `#${cfg.color.toString(16).padStart(6, "0")}`,
         getPosition: () => {
           const state = getActiveModel().getState(getSimulationTime());
-          const observer = getActiveObserver();
+          const observer = getSkyRecenterObserver();
           const direction = observer.getDirectionTo(cfg.id, state);
           const worldPos = observer.getFrame().worldPosition;
           return {
@@ -1147,7 +1164,7 @@ const defaultLayerVisibility: Record<string, boolean> = {
   moonMarker: true,
   orbitLines: false,
   earthOrbitLine: false,
-  observerMarkers: true,
+  observerMarkers: false,
   observerFarSideIndicator: true,
   targetReticles: true,
   planetLabels: false,
@@ -1186,6 +1203,16 @@ const viewModes: ViewModeDef[] = [
 // --- UI ---------------------------------------------------------------
 
 let controlPanel: ControlPanel;
+// Captured once, right after every piece of state below has settled into
+// its own coded-default value (see the assignment right after `controlPanel
+// = new ControlPanel(...)`) - the baseline diffSceneState/mergeSceneState
+// (SceneState.ts) diff saved/pasted scene JSON against, so a scene only
+// needs to record what it changes, not a full copy of every field. Declared
+// here (rather than at that later assignment) purely so the closures below
+// that reference it (selectShot, sceneIO.getCurrentStateJson/onApplyJson),
+// all defined before that point in the file, can close over it - same
+// forward-reference pattern as `controlPanel` itself above.
+let DEFAULT_SCENE_STATE: SceneState;
 
 const onHemisphereModeChange = (mode: HemisphereMode): void => {
   hemisphereMode = mode;
@@ -1277,6 +1304,7 @@ function addObserver(): void {
 
 function switchCameraMode(mode: CameraMode): void {
   cameraManager.setMode(mode);
+  activeCameraModeForSky = mode;
   controlPanel.setActiveCameraMode(mode);
   groundMoveControls.setActive(mode === CameraMode.Ground);
 }
@@ -1543,8 +1571,8 @@ function applySceneState(state: SceneState): void {
     starSize: state.starSize,
     starOpacity: state.starOpacity,
     minimapOpacity: state.minimapOpacity,
-    timeScale: state.timeSpeed,
   });
+  timePanel.syncSpeed(state.timeSpeed);
 }
 
 // Fetched at runtime (not a static import) - see VideoLibrary.ts's own doc
@@ -1562,7 +1590,7 @@ function selectShot(videoId: string, shotId: string): void {
     console.warn(`selectShot: unknown video/shot "${videoId}/${shotId}"`);
     return;
   }
-  applySceneState(shot.state);
+  applySceneState(mergeSceneState(shot.state, DEFAULT_SCENE_STATE));
   controlPanel.setActiveShot(videoId, shotId);
 }
 
@@ -1580,14 +1608,14 @@ const panelConfig: ControlPanelConfig = {
     onSelectShot: selectShot,
   },
   sceneIO: {
-    getCurrentStateJson: () => JSON.stringify(captureSceneState(), null, 2),
+    getCurrentStateJson: () => JSON.stringify(diffSceneState(captureSceneState(), DEFAULT_SCENE_STATE), null, 2),
     onApplyJson: (json) => {
       try {
-        const state = JSON.parse(json) as SceneState;
-        if (state.version !== SCENE_STATE_VERSION) {
+        const state = JSON.parse(json) as Partial<SceneState>;
+        if (state.version !== undefined && state.version !== SCENE_STATE_VERSION) {
           console.warn(`Scene JSON version ${state.version} != current ${SCENE_STATE_VERSION} - applying anyway.`);
         }
-        applySceneState(state);
+        applySceneState(mergeSceneState(state, DEFAULT_SCENE_STATE));
       } catch (err) {
         console.error("Failed to apply scene JSON:", err);
         alert(`Couldn't apply that scene JSON - see console for details.\n${(err as Error).message}`);
@@ -1969,29 +1997,26 @@ const panelConfig: ControlPanelConfig = {
       },
     },
   },
-  time: {
-    onPlayPauseChange: (paused) => (simClock.paused = paused),
-    timeScale: {
-      value: TIME_SPEED_DEFAULT,
-      min: TIME_SPEED_MIN,
-      max: TIME_SPEED_MAX,
-      step: 0.1,
-      format: (v) => `${v}x`,
-      onChange: (v) => (simClock.timeSpeed = v),
-    },
-    onStepHour: () => simClock.addElapsedDays(TIME_STEP_HOUR_DAYS),
-    onStepDay: () => simClock.addElapsedDays(TIME_STEP_DAY_DAYS),
-    onStepMonth: () => simClock.addElapsedDays(TIME_STEP_MONTH_DAYS),
-    onStepYear: () => simClock.addElapsedDays(TIME_STEP_YEAR_DAYS),
-    onReset: () => simClock.reset(),
-    currentDate: simulationDayToDate(getSimulationTime()),
-    onSelectDate: (date) => simClock.setElapsedDays(dateToSimulationDay(date)),
-  },
 };
 
 controlPanel = new ControlPanel(container, panelConfig);
 controlPanel.setActiveCameraMode(CameraMode.Space);
-const timeHud = new TimeHud(container);
+// Every default has now been applied (defaultLayerVisibility above, the
+// panel's own initial control values, etc.) and nothing has touched a shot
+// or pasted JSON yet - see DEFAULT_SCENE_STATE's own doc comment above.
+DEFAULT_SCENE_STATE = captureSceneState();
+const timePanel = new TimePanel(container, {
+  onPlayPauseChange: (paused) => (simClock.paused = paused),
+  timeSpeed: TIME_SPEED_DEFAULT,
+  onTimeSpeedChange: (v) => (simClock.timeSpeed = v),
+  onStepHour: () => simClock.addElapsedDays(TIME_STEP_HOUR_DAYS),
+  onStepDay: () => simClock.addElapsedDays(TIME_STEP_DAY_DAYS),
+  onStepMonth: () => simClock.addElapsedDays(TIME_STEP_MONTH_DAYS),
+  onStepYear: () => simClock.addElapsedDays(TIME_STEP_YEAR_DAYS),
+  onReset: () => simClock.reset(),
+  currentDate: simulationDayToDate(getSimulationTime()),
+  onSelectDate: (date) => simClock.setElapsedDays(dateToSimulationDay(date)),
+});
 const minimapHud = new MinimapHud(container);
 
 new StarPicker(
@@ -2116,7 +2141,7 @@ renderer.setAnimationLoop(() => {
 
   const activeLatLon = observerRegistry.getActive().station.getLatLon();
   controlPanel.setObserverLatLon(activeLatLon.latDeg, activeLatLon.lonDeg);
-  timeHud.update(simulationDayToDate(universeState.time), simClock.timeSpeed, simClock.paused);
+  timePanel.update(simulationDayToDate(universeState.time), simClock.timeSpeed, simClock.paused);
   // Internally a no-op unless the active observer has moved past
   // GroundScatterLayer's own REGEN_THRESHOLD since the last rebuild - cheap
   // enough to call unconditionally every frame.

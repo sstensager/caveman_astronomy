@@ -55,6 +55,24 @@ export class EarthBase implements Layer {
 
   rotationEnabled = true;
 
+  // update()'s deltaSeconds carries normal real-frame-timing noise (vsync/
+  // GC/OS-scheduling jitter, typically a few percent of a frame) - at high
+  // time-speed multipliers that same relative noise becomes a large
+  // absolute wobble in the rotation step size, since deltaSeconds is
+  // already scaled by timeSpeed by the time it gets here (see
+  // SimulationClock.tick). Earth's own low-frequency surface geometry
+  // never shows it (Ground View's camera is a rigid child of this same
+  // rotationGroup, so it has zero relative motion against it at any
+  // instant), but the star field - only ever seen through this rotation,
+  // via a camera that's constantly re-deriving its orientation from it -
+  // reads any frame-to-frame unevenness directly as visible vibration.
+  // Smoothing the delta (an exponential moving average, not the resulting
+  // angle - which would need wraparound-aware interpolation) damps that
+  // high-frequency noise while preserving the correct long-run average
+  // spin rate.
+  private smoothedDeltaSeconds = 0;
+  private static readonly ROTATION_DELTA_SMOOTHING = 0.2;
+
   constructor() {
     this.object3D = new THREE.Group();
     this.object3D.name = "Earth.orbitGroup";
@@ -102,7 +120,19 @@ export class EarthBase implements Layer {
 
   update(deltaSeconds: number): void {
     if (this.rotationEnabled) {
-      this.rotationGroup.rotation.y += BASE_EARTH_ANGULAR_SPEED * deltaSeconds;
+      // See smoothedDeltaSeconds's own doc comment for why the raw,
+      // per-frame deltaSeconds isn't used directly here.
+      this.smoothedDeltaSeconds += (deltaSeconds - this.smoothedDeltaSeconds) * EarthBase.ROTATION_DELTA_SMOOTHING;
+      // Wrapped mod 2*PI rather than left to grow unboundedly - at high
+      // time-speed multipliers this angle accumulates by many radians per
+      // real frame, and letting it climb into the thousands+ over a play
+      // session degrades Math.sin/cos's argument-reduction accuracy enough
+      // to show up as visible jitter/wobble in everything downstream of
+      // this rotation (Ground View's camera, in particular - see
+      // GroundCameraRig). Wrapping keeps the value small without changing
+      // the accumulation behavior itself (spin still resumes from wherever
+      // it was left when re-enabled, not snapped to an absolute angle).
+      this.rotationGroup.rotation.y = (this.rotationGroup.rotation.y + BASE_EARTH_ANGULAR_SPEED * this.smoothedDeltaSeconds) % (2 * Math.PI);
     }
   }
 

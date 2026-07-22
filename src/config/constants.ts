@@ -103,8 +103,25 @@ export const BASE_EARTH_ANGULAR_SPEED = 0.15;
 // already-compressed, non-realtime spin.
 export const SIMULATED_DAY_DURATION_SECONDS = (2 * Math.PI) / BASE_EARTH_ANGULAR_SPEED;
 
-export const TIME_SPEED_MIN = 0;
-export const TIME_SPEED_MAX = 20;
+// Log-scale slider bounds for the Time Panel's speed control (see
+// TimePanel.speedFromPosition/positionFromSpeed) - a true stop is owned by
+// the Play/Pause button, not a slider min of 0, so FLOOR is a slow-motion
+// crawl rather than zero.
+//
+// CEIL is capped well below "as fast as the math allows" because Earth's
+// own diurnal spin (see EarthBase.update, BASE_EARTH_ANGULAR_SPEED) is tied
+// 1:1 to simulated time - at 60fps, one rendered frame covers
+// BASE_EARTH_ANGULAR_SPEED * (1/60) * timeSpeed radians of spin. Past
+// roughly a quarter-turn of Earth per frame, the animation stops reading as
+// "fast spin" and starts reading as incoherent strobing (a real frame-rate
+// aliasing limit, not a precision bug - each rendered frame is a
+// legitimately different, far-apart sample of the rotation, same as a
+// wagon wheel under a strobe light). 500 keeps that at ~1.25rad/frame
+// (~72deg) at 60fps while still being 25x the old 20x cap - a simulated
+// year passes in ~30 real seconds (~12 simulated days/sec, since
+// SIMULATED_DAY_DURATION_SECONDS is ~42s).
+export const TIME_SPEED_FLOOR = 0.05;
+export const TIME_SPEED_CEIL = 500;
 export const TIME_SPEED_DEFAULT = 1;
 
 export const COLORS = {

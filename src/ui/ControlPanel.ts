@@ -8,7 +8,6 @@ import {
   createButton,
   createButtonGroup,
   createCheckbox,
-  createDateInput,
   createPlaceholder,
   createSection,
   createSlider,
@@ -322,21 +321,6 @@ export interface ControlPanelConfig {
      *  whether it's shown at all - see minimapVisible above. */
     minimapOpacity: SliderConfig;
   };
-  time: {
-    onPlayPauseChange: (paused: boolean) => void;
-    timeScale: SliderConfig;
-    onStepHour: () => void;
-    onStepDay: () => void;
-    onStepMonth: () => void;
-    onStepYear: () => void;
-    onReset: () => void;
-    /** Seeds the date picker's initial value only (like every other
-     *  control's construction-time `value`) - it does NOT stay live-synced
-     *  while time passes (play/step buttons/speed all move the clock too);
-     *  the always-visible TimeHud is what shows the live current date. */
-    currentDate: Date;
-    onSelectDate: (date: Date) => void;
-  };
 }
 
 const percentFormat = (v: number) => `${Math.round(v * 100)}%`;
@@ -405,7 +389,6 @@ export class ControlPanel {
     this.element.appendChild(this.buildObserverSection(config));
     this.element.appendChild(this.buildSelectedStarSection());
     this.element.appendChild(this.buildCameraSection(config));
-    this.element.appendChild(this.buildTimeSection(config));
 
     container.appendChild(this.element);
   }
@@ -1029,49 +1012,5 @@ export class ControlPanel {
         }),
       ).element,
     ]);
-  }
-
-  private buildTimeSection(config: ControlPanelConfig): HTMLElement {
-    let paused = false;
-    const playPauseButton = document.createElement("button");
-    playPauseButton.type = "button";
-    playPauseButton.className = "control-button";
-    playPauseButton.textContent = "Pause";
-    playPauseButton.addEventListener("click", () => {
-      paused = !paused;
-      playPauseButton.textContent = paused ? "Play" : "Pause";
-      config.time.onPlayPauseChange(paused);
-    });
-
-    const { element: stepButtons } = createButtonGroup([
-      { key: "hour", label: "+1 Hour", onClick: config.time.onStepHour },
-      { key: "day", label: "+1 Day", onClick: config.time.onStepDay },
-      { key: "month", label: "+1 Month", onClick: config.time.onStepMonth },
-      { key: "year", label: "+1 Year", onClick: config.time.onStepYear },
-    ]);
-
-    const resetButton = document.createElement("button");
-    resetButton.type = "button";
-    resetButton.className = "control-button";
-    resetButton.textContent = "Reset Time";
-    resetButton.addEventListener("click", config.time.onReset);
-
-    const dateInput = createDateInput({
-      label: "Jump to Date",
-      value: config.time.currentDate,
-      onChange: config.time.onSelectDate,
-    });
-
-    const content = [
-      playPauseButton,
-      this.registerSlider(
-        "timeScale",
-        createSlider({ ...config.time.timeScale, label: "Time Scale", format: config.time.timeScale.format ?? ((v) => `${v}x`) }),
-      ).element,
-      stepButtons,
-      dateInput.element,
-      resetButton,
-    ];
-    return createSection("Time", true, content);
   }
 }
