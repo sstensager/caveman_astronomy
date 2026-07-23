@@ -240,6 +240,14 @@ input[type="range"] {
   font-weight: 600;
 }
 
+.time-panel-date-time {
+  transition: opacity 0.2s ease;
+}
+
+.time-panel-date-time-faded {
+  opacity: 0.35;
+}
+
 .time-panel-rate {
   color: rgba(240, 240, 245, 0.6);
   font-variant-numeric: tabular-nums;

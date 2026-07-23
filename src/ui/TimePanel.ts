@@ -1,4 +1,4 @@
-import { SIMULATED_DAY_DURATION_SECONDS, TIME_SPEED_CEIL, TIME_SPEED_FLOOR } from "../config/constants";
+import { SIMULATED_DAY_DURATION_SECONDS, TIME_SPEED_CEIL, TIME_SPEED_FLOOR, TIME_SPEED_REALTIME } from "../config/constants";
 import { createButton, createButtonGroup, createDateInput, createSlider } from "./controls";
 
 const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
@@ -7,6 +7,20 @@ const DATE_FORMAT = new Intl.DateTimeFormat(undefined, {
   day: "numeric",
   timeZone: "UTC",
 });
+
+const TIME_FORMAT = new Intl.DateTimeFormat(undefined, {
+  hour: "2-digit",
+  minute: "2-digit",
+  hour12: false,
+  timeZone: "UTC",
+});
+
+// Above this rate the hour:minute readout ticks over faster than a human
+// can actually track (a minute of sim time passes multiple times per
+// real second), so it stops being informative and starts just being visual
+// noise - faded rather than removed outright, since it's still accurate and
+// still worth having if you pause to look.
+const MINUTE_READOUT_FADE_HOURS_PER_SEC = 10;
 
 // The speed slider's own DOM range is this many discrete integer positions,
 // mapped onto [TIME_SPEED_FLOOR, TIME_SPEED_CEIL] on a LOG scale (see
@@ -18,7 +32,17 @@ const SPEED_SLIDER_STEPS = 1000;
 // so it can never end up ABOVE the slider's actual max - positionFromSpeed
 // clamps to TIME_SPEED_CEIL, so a preset exceeding it would silently snap
 // to a lower speed than its own label claimed.
-const SPEED_PRESETS = [1, 10, 100, TIME_SPEED_CEIL];
+//
+// Realtime sits below TIME_SPEED_FLOOR by design (see its doc comment in
+// constants.ts) - clicking it therefore bypasses the slider's clamped
+// speed<->position round-trip entirely (see the button wiring below), the
+// same way every other preset here does now too.
+const SPEED_PRESETS: Array<{ value: number; label: string }> = [
+  { value: TIME_SPEED_REALTIME, label: "Realtime" },
+  { value: 10, label: "10x" },
+  { value: 100, label: "100x" },
+  { value: TIME_SPEED_CEIL, label: `${TIME_SPEED_CEIL}x` },
+];
 
 function speedFromPosition(position: number): number {
   const ratio = position / SPEED_SLIDER_STEPS;
@@ -83,10 +107,13 @@ export class TimePanel {
   readonly element: HTMLElement;
   private readonly header: HTMLElement;
   private readonly dateLabel: HTMLElement;
+  private readonly dateTextSpan: HTMLElement;
+  private readonly timeLabel: HTMLElement;
   private readonly rateLabel: HTMLElement;
   private readonly minimizeButton: HTMLButtonElement;
   private readonly playPauseButton: HTMLButtonElement;
   private readonly speedSlider: HTMLInputElement;
+  private readonly setSpeedSliderLabel: (text: string) => void;
   private minimized = false;
   private paused = false;
   private dragging = false;
@@ -124,6 +151,11 @@ export class TimePanel {
     this.dateLabel = document.createElement("div");
     this.dateLabel.className = "time-panel-date";
 
+    this.dateTextSpan = document.createElement("span");
+    this.timeLabel = document.createElement("span");
+    this.timeLabel.className = "time-panel-date-time";
+    this.dateLabel.append(this.dateTextSpan, " at ", this.timeLabel);
+
     this.rateLabel = document.createElement("div");
     this.rateLabel.className = "time-panel-rate";
 
@@ -133,7 +165,11 @@ export class TimePanel {
     this.playPauseButton.textContent = "Pause";
     this.playPauseButton.addEventListener("click", () => config.onPlayPauseChange(!this.paused));
 
-    const { element: speedSliderElement, input: speedSliderInput } = createSlider({
+    const {
+      element: speedSliderElement,
+      input: speedSliderInput,
+      setValueLabel: setSpeedSliderLabel,
+    } = createSlider({
       label: "Time Scale",
       min: 0,
       max: SPEED_SLIDER_STEPS,
@@ -143,14 +179,23 @@ export class TimePanel {
       onChange: (position) => config.onTimeSpeedChange(speedFromPosition(position)),
     });
     this.speedSlider = speedSliderInput;
+    this.setSpeedSliderLabel = setSpeedSliderLabel;
 
     const { element: presetButtons } = createButtonGroup(
-      SPEED_PRESETS.map((speed) => ({
-        key: String(speed),
-        label: `${speed}x`,
+      SPEED_PRESETS.map(({ value, label }) => ({
+        key: label,
+        label,
         onClick: () => {
-          this.speedSlider.value = String(positionFromSpeed(speed));
-          this.speedSlider.dispatchEvent(new Event("input", { bubbles: true }));
+          // Sets the exact preset value directly rather than dispatching the
+          // slider's own 'input' event - that round-trips through
+          // speedFromPosition(positionFromSpeed(value)), which clamps to
+          // [TIME_SPEED_FLOOR, TIME_SPEED_CEIL] and would silently bump
+          // Realtime (well below FLOOR) up to FLOOR instead. The thumb still
+          // moves (clamped, for visual feedback) and the label still updates
+          // (to the exact unclamped rate), just without re-firing onChange.
+          this.speedSlider.value = String(positionFromSpeed(value));
+          this.setSpeedSliderLabel(formatRate(value));
+          config.onTimeSpeedChange(value);
         },
       })),
     );
@@ -219,7 +264,10 @@ export class TimePanel {
 
   /** Pushed once per frame from main.ts's render loop. */
   update(date: Date, timeSpeed: number, paused: boolean): void {
-    this.dateLabel.textContent = DATE_FORMAT.format(date);
+    this.dateTextSpan.textContent = DATE_FORMAT.format(date);
+    this.timeLabel.textContent = TIME_FORMAT.format(date);
+    const hoursPerSecond = (timeSpeed / SIMULATED_DAY_DURATION_SECONDS) * 24;
+    this.timeLabel.classList.toggle("time-panel-date-time-faded", !paused && hoursPerSecond >= MINUTE_READOUT_FADE_HOURS_PER_SEC);
     this.rateLabel.textContent = paused ? "Paused" : formatRate(timeSpeed);
     if (paused !== this.paused) {
       this.paused = paused;
@@ -228,13 +276,19 @@ export class TimePanel {
   }
 
   /** Reflects a Scene JSON load's timeSpeed onto the slider's displayed
-   *  position - unlike update() above, NOT called every frame, since
-   *  re-deriving and reassigning the slider's value every frame would
+   *  position and label - unlike update() above, NOT called every frame,
+   *  since re-deriving and reassigning the slider's value every frame would
    *  fight the user's own input mid-drag. Play/Pause needs no equivalent
    *  here: update() already refreshes it from the live simClock.paused
-   *  every frame regardless of who last changed it. */
+   *  every frame regardless of who last changed it.
+   *
+   *  Sets position/label directly rather than dispatching the slider's own
+   *  'input' event, for the same reason the preset buttons do above: a
+   *  dispatch re-fires onChange with the CLAMPED speedFromPosition(...)
+   *  value, which would silently overwrite an already-correctly-applied
+   *  sub-FLOOR value (e.g. a saved Realtime scene) the moment it loads. */
   syncSpeed(timeSpeed: number): void {
     this.speedSlider.value = String(positionFromSpeed(timeSpeed));
-    this.speedSlider.dispatchEvent(new Event("input", { bubbles: true }));
+    this.setSpeedSliderLabel(formatRate(timeSpeed));
   }
 }

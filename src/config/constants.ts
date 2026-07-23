@@ -122,7 +122,19 @@ export const SIMULATED_DAY_DURATION_SECONDS = (2 * Math.PI) / BASE_EARTH_ANGULAR
 // SIMULATED_DAY_DURATION_SECONDS is ~42s).
 export const TIME_SPEED_FLOOR = 0.05;
 export const TIME_SPEED_CEIL = 500;
-export const TIME_SPEED_DEFAULT = 1;
+// True 1:1 realtime - one real second of play advances the sim by exactly
+// one real second's worth of Earth's actual rotation (a real 86400s day),
+// NOT one compressed SIMULATED_DAY_DURATION_SECONDS-day. At this speed nothing
+// visibly moves for the length of a normal session (by design - see the
+// "Realtime" preset in TimePanel, which is deliberately indistinguishable
+// from Paused at a glance). Sits far below TIME_SPEED_FLOOR, so it's reached
+// via its own preset button rather than the log slider's range.
+export const TIME_SPEED_REALTIME = SIMULATED_DAY_DURATION_SECONDS / 86400;
+// 1 simulated hour per real second (see TimePanel's formatRate) - reads more
+// intuitively on load than a bare "1x" multiplier, which at
+// SIMULATED_DAY_DURATION_SECONDS's ~42s/day pace works out to a much less
+// legible ~0.57 hours/sec.
+export const TIME_SPEED_DEFAULT = SIMULATED_DAY_DURATION_SECONDS / 24;
 
 export const COLORS = {
   background: 0x02030a,

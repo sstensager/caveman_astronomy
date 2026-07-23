@@ -41,6 +41,11 @@ export interface SliderOptions {
 export interface SliderControl {
   element: HTMLElement;
   input: HTMLInputElement;
+  /** Sets the displayed value-label text directly, bypassing `format` -
+   *  for callers moving the thumb to a value outside [min, max] (which
+   *  `format`, itself usually built on the same clamped position math as
+   *  the input's own range, can't represent) without firing `onChange`. */
+  setValueLabel: (text: string) => void;
 }
 
 export function createSlider(options: SliderOptions): SliderControl {
@@ -72,7 +77,13 @@ export function createSlider(options: SliderOptions): SliderControl {
   label.appendChild(valueLabel);
   element.appendChild(label);
   element.appendChild(input);
-  return { element, input };
+  return {
+    element,
+    input,
+    setValueLabel: (text: string) => {
+      valueLabel.textContent = text;
+    },
+  };
 }
 
 export interface DateInputOptions {
